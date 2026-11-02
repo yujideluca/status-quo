@@ -87,8 +87,31 @@ pub struct Request {
     pub layer: StackLayer,
 }
 
+/// How the application wants its surface placed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Surface {
+    /// Anchored to a corner with the requested size (the first-run layout).
+    Legacy,
+    /// Docked at a desktop position, sized to the widgets inside it.
+    Free {
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+    },
+    /// Covers the whole output (transparent) so widgets can be dragged anywhere.
+    Editing,
+}
+
 /// One frame of the application: runs the egui context and returns its output.
 pub trait Frame {
+    /// Where and how large the application wants its surface, asked after every frame.
+    fn surface(&self) -> Surface {
+        Surface::Legacy
+    }
+    /// Desktop position of the docked surface's top-left corner, reported just before the
+    /// surface covers the whole output for editing.
+    fn docked_origin(&mut self, _origin: (f32, f32)) {}
     /// Called once per drawn frame. Return `false` to close the surface.
     fn update(&mut self, ctx: &egui::Context) -> bool;
     /// The stacking layer the application currently wants.
@@ -115,6 +138,10 @@ struct State {
     app: Box<dyn Frame>,
     placement: LayerPlacement,
     size: (u32, u32),
+    surface: Surface,
+    anchor: Anchor,
+    margin: i32,
+    legacy_size: (u32, u32),
     scale: i32,
     configured: bool,
     events: Vec<egui::Event>,
@@ -122,6 +149,17 @@ struct State {
     next_draw: Option<Instant>,
     exit: Arc<AtomicBool>,
     stop: bool,
+}
+
+/// Top-left corner that keeps a surface of `size` inside `screen` (corner first if too large).
+pub fn clamp_to_screen(
+    (x, y): (i32, i32),
+    (width, height): (u32, u32),
+    (screen_w, screen_h): (f32, f32),
+) -> (i32, i32) {
+    let max_x = (screen_w as i32 - width as i32).max(0);
+    let max_y = (screen_h as i32 - height as i32).max(0);
+    (x.clamp(0, max_x), y.clamp(0, max_y))
 }
 
 fn wlr_anchor(anchor: Anchor) -> WlrAnchor {
@@ -251,12 +289,12 @@ pub fn run(
         .map_err(|e| e.to_string())?;
     handle
         .insert_source(
-            Timer::from_duration(Duration::from_secs(1)),
+            Timer::from_duration(Duration::from_millis(200)),
             |_, _, state| {
                 if state.exit.load(Ordering::Acquire) {
                     state.stop = true;
                 }
-                calloop::timer::TimeoutAction::ToDuration(Duration::from_secs(1))
+                calloop::timer::TimeoutAction::ToDuration(Duration::from_millis(200))
             },
         )
         .map_err(|e| e.to_string())?;
@@ -279,6 +317,10 @@ pub fn run(
         app,
         placement,
         size: (request.width, request.height),
+        surface: Surface::Legacy,
+        anchor: request.anchor,
+        margin: request.margin,
+        legacy_size: (request.width, request.height),
         scale: 1,
         configured: false,
         events: Vec::new(),
@@ -352,6 +394,10 @@ impl State {
                 self.want_frame(viewport.repaint_delay);
             }
         }
+        let wanted_surface = self.app.surface();
+        if wanted_surface != self.surface {
+            self.apply_surface(wanted_surface);
+        }
         let Some(gpu) = self.gpu.as_mut() else { return };
         let jobs = self.ctx.tessellate(output.shapes, output.pixels_per_point);
         for (id, delta) in &output.textures_delta.set {
@@ -402,6 +448,90 @@ impl State {
         for id in &output.textures_delta.free {
             gpu.renderer.free_texture(id);
         }
+    }
+
+    /// Logical size of the first output, for placing and covering the desktop.
+    fn screen(&self) -> (f32, f32) {
+        self.outputs
+            .outputs()
+            .find_map(|o| self.outputs.info(&o))
+            .and_then(|i| i.logical_size)
+            .map(|(w, h)| (w as f32, h as f32))
+            .unwrap_or((1920.0, 1080.0))
+    }
+
+    /// Where the docked surface's top-left corner is on the desktop right now.
+    fn docked_origin(&self) -> (f32, f32) {
+        match self.surface {
+            Surface::Free {
+                x,
+                y,
+                width,
+                height,
+            } => {
+                let (x, y) = clamp_to_screen((x, y), (width, height), self.screen());
+                (x as f32, y as f32)
+            }
+            _ => {
+                let (sw, sh) = self.screen();
+                let (w, h) = (self.size.0 as f32, self.size.1 as f32);
+                let m = self.margin as f32;
+                let x = if self.anchor.left {
+                    m
+                } else if self.anchor.right {
+                    sw - m - w
+                } else {
+                    (sw - w) / 2.0
+                };
+                let y = if self.anchor.top {
+                    m
+                } else if self.anchor.bottom {
+                    sh - m - h
+                } else {
+                    (sh - h) / 2.0
+                };
+                (x.max(0.0), y.max(0.0))
+            }
+        }
+    }
+
+    fn apply_surface(&mut self, wanted: Surface) {
+        if wanted == Surface::Editing && self.surface != Surface::Editing {
+            let origin = self.docked_origin();
+            self.app.docked_origin(origin);
+        }
+        match wanted {
+            Surface::Legacy => {
+                self.layer.set_anchor(wlr_anchor(self.anchor));
+                let m = self.margin;
+                self.layer.set_margin(m, m, m, m);
+                self.layer.set_size(self.legacy_size.0, self.legacy_size.1);
+            }
+            Surface::Free {
+                x,
+                y,
+                width,
+                height,
+            } => {
+                // Keep the docked tray on the screen: a tray wider or lower than where it was
+                // left slides back, so its header buttons stay reachable.
+                let (screen_w, screen_h) = self.screen();
+                let (x, y) = clamp_to_screen((x, y), (width, height), (screen_w, screen_h));
+                self.layer.set_anchor(WlrAnchor::TOP | WlrAnchor::LEFT);
+                self.layer.set_margin(y, 0, 0, x);
+                self.layer.set_size(width.max(1), height.max(1));
+            }
+            Surface::Editing => {
+                self.layer.set_anchor(
+                    WlrAnchor::TOP | WlrAnchor::BOTTOM | WlrAnchor::LEFT | WlrAnchor::RIGHT,
+                );
+                self.layer.set_margin(0, 0, 0, 0);
+                self.layer.set_size(0, 0);
+            }
+        }
+        self.layer.commit();
+        self.surface = wanted;
+        self.want_frame(Duration::ZERO);
     }
 
     fn resize(&mut self, width: u32, height: u32) {
@@ -606,6 +736,16 @@ mod tests {
     }
 
     // REQ SQ-27: every anchor flag reaches the compositor request.
+    // REQ SQ-15 SQ-29: a docked tray never slides off the screen, so its buttons stay reachable.
+    #[test]
+    fn docked_tray_is_kept_on_the_screen() {
+        let screen = (1920.0, 1080.0);
+        assert_eq!(clamp_to_screen((1464, 140), (540, 986), screen), (1380, 94));
+        assert_eq!(clamp_to_screen((100, 50), (400, 300), screen), (100, 50));
+        assert_eq!(clamp_to_screen((-30, -5), (400, 300), screen), (0, 0));
+        assert_eq!(clamp_to_screen((500, 500), (3000, 2000), screen), (0, 0));
+    }
+
     #[test]
     fn anchor_flags_translate_to_layer_shell_edges() {
         let corner = wlr_anchor(Anchor {

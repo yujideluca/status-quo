@@ -1,0 +1,111 @@
+{
+  "recorded": "2026-11-02",
+  "how": "Manual test on Giovanni's laptop (KDE Plasma, Wayland, layer-shell, 1920x1080) with a virtual pointer through /dev/uinput; every value below was observed, then turned into an automated check in desktop_e2e.rs.",
+  "screen": [
+    1920,
+    1080
+  ],
+  "add_menu": {
+    "first_item_below_button_row": 27,
+    "item_height": 26,
+    "items_observed": 12,
+    "item_used_by_test": "index 4 = claude / Account usage"
+  },
+  "observed": {
+    "edit_mode_toolbar": "floating at top centre with Done, Cancel and Add widget",
+    "body_drag": {
+      "pointer_delta": [
+        -100,
+        190
+      ],
+      "widget_delta": [
+        -100,
+        190
+      ]
+    },
+    "corner_drag": {
+      "pointer_delta": [
+        80,
+        126
+      ],
+      "size_delta_within": 12
+    },
+    "left_edge_drag": {
+      "pointer_delta": [
+        74,
+        0
+      ],
+      "x_delta": 74,
+      "width_delta": -74
+    },
+    "done_saved_geometry_keys": [
+      "x",
+      "y",
+      "width",
+      "height",
+      "monitor"
+    ],
+    "token_controls": [
+      "range 24h/7d/30d",
+      "bucket hourly/daily",
+      "cumulative checkbox"
+    ],
+    "customize_cancel_leaves_config_unchanged": true,
+    "edit_cancel_leaves_config_unchanged": true,
+    "restart_keeps_layout_and_options": true,
+    "docked_tray_stays_on_screen": "after a widget is moved right the docked tray slides back so its header buttons remain on screen",
+    "sticky": "not part of the 2026-11-02 manual pass; recorded from the unit tests and the first automated run: a border within 10 px of another widget settles exactly one gap (config.gap, default 10) from it, and a size within 10 px of another widget's becomes that size"
+  },
+  "limits": {
+    "idle_cpu_percent_of_one_core_max": 1.0,
+    "panel_plus_collector_rss_mib_max": 200,
+    "idle_cpu_seen": {
+      "panel": 0.33,
+      "collector": 0.55
+    },
+    "rss_mib_seen": {
+      "panel": 154,
+      "collector": 30
+    },
+    "warm_up_note": "A fresh state directory makes the collector read every transcript first (about 37% of one core for roughly half a minute); idle cost is measured after it settles.",
+    "stop_seconds_max": 3
+  },
+  "open_findings": [
+    "Idle CPU of panel plus collector is about 1.3% of one core against the 1% target of SQ-23; cause not found (DESIGN.md section 5)"
+  ],
+  "edit_toolbar_from_screen_centre": {
+    "done": 87,
+    "cancel": 145,
+    "add_widget": 235,
+    "y": 28
+  },
+  "header_buttons_from_tray_right_edge": {
+    "customize": 42,
+    "edit_tray": 131,
+    "add_widget": 224,
+    "y_from_tray_top": 9
+  },
+  "first_run_tray": {
+    "width": 440,
+    "height": 900,
+    "margin": 16,
+    "anchor": "top-right"
+  },
+  "token_controls_from_widget_top_left": {
+    "range_7d": [
+      66,
+      48
+    ],
+    "cumulative": [
+      20,
+      74
+    ],
+    "note": "observed at the manual test: 7d at (989,214) and Cumulative at (943,240) for a widget whose top-left was (923,166)"
+  },
+  "resolved_findings": [
+    "Edit tray ignores the Lock widget layout setting -> the button is disabled while locked (unit test; this test seeds an unlocked configuration)",
+    "A widget added to a docked free tray stacked below the screen -> it now gets an explicit rectangle at the top-left corner (checked here)",
+    "SIGTERM noticed late by the layer host -> the exit flag is polled every 200 ms (stop time checked here)",
+    "A first-run tray taller than its surface froze widgets below the screen edge -> the frozen layout is compressed to fit (checked here)"
+  ]
+}

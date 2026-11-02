@@ -24,4 +24,8 @@ git diff --quiet -- docs/TRACEABILITY.md || { echo "docs/TRACEABILITY.md changed
 step "5 fitness functions"
 tools/pipeline-check.sh --measure-only
 [ "$SECONDS" -le "$MAX_GATE_SECONDS" ] || { echo "FAIL gate took ${SECONDS}s (> ${MAX_GATE_SECONDS}s)"; exit 1; }
+if [ "${STATUS_QUO_E2E:-0}" = 1 ]; then
+  step "6 desktop end-to-end test (needs a Wayland session and a free screen: also set STATUS_QUO_E2E_SCREEN_IS_FREE=1)"
+  tools/ui_e2e.sh
+fi
 printf '\nquality gate passed (%ss)\n' "$SECONDS"

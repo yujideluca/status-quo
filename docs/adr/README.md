@@ -10,3 +10,4 @@ rewritten: a new decision supersedes it.
 | [0002](0002-portable-rust-widgets.md) | Portable Rust widgets and independent host wrappers | accepted |
 | [0003](0003-program-measures-skill-judges.md) | A program measures and blocks, a skill judges and proposes | accepted |
 | [0004](0004-host-compatibility-layer.md) | Host compatibility layer: layer-shell, X11 hints or plain window chosen at run time | accepted |
+| [0005](0005-free-canvas-layout.md) | Free canvas layout: any widget size and position, tray surface follows the widgets | accepted |

@@ -11,13 +11,15 @@ fn transport_rejects_bad_frames_and_preserves_configuration_between_clients() {
     let path = server.socket_path();
     let stop = server.stop_handle();
     let handle = thread::spawn(move || server.serve(false).unwrap());
-    for _ in 0..100 {
-        if path.exists() {
+    let client = Client::new(path.clone());
+    // Wait until the server answers, not just until its socket file exists: under load the file
+    // appears before the server accepts, which made this test fail on busy first runs.
+    for _ in 0..500 {
+        if matches!(client.request(Command::Ping), Ok(Reply::Pong)) {
             break;
         }
         thread::sleep(Duration::from_millis(10));
     }
-    let client = Client::new(path.clone());
     assert!(matches!(
         client.request(Command::Ping).unwrap(),
         Reply::Pong

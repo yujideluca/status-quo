@@ -224,11 +224,43 @@ fn run() -> Result<(), String> {
 struct LayerApp(App);
 impl host::layer::Frame for LayerApp {
     fn update(&mut self, ctx: &egui::Context) -> bool {
+        self.0.tray.fullscreen_edit = true;
         self.0.tick(ctx);
         true
     }
+    fn surface(&self) -> host::layer::Surface {
+        let tray = &self.0.tray;
+        if tray.editing {
+            return host::layer::Surface::Editing;
+        }
+        match tray.desired_size() {
+            Some(size) => {
+                let (x, y) = tray
+                    .config
+                    .geometry
+                    .get("tray")
+                    .map(|g| (g.x, g.y))
+                    .unwrap_or((16.0, 16.0));
+                host::layer::Surface::Free {
+                    x: x as i32,
+                    y: y as i32,
+                    width: size.x.ceil().clamp(330.0, 16_384.0) as u32,
+                    height: size.y.ceil().clamp(100.0, 16_384.0) as u32,
+                }
+            }
+            None => host::layer::Surface::Legacy,
+        }
+    }
+    fn docked_origin(&mut self, origin: (f32, f32)) {
+        self.0.tray.origin = egui::vec2(origin.0, origin.1);
+    }
     fn layer(&self) -> Layer {
-        self.0.tray.config.layer
+        // While editing, the tray covers the desktop above windows so every widget can be reached.
+        if self.0.tray.editing {
+            Layer::Above
+        } else {
+            self.0.tray.config.layer
+        }
     }
 }
 fn ensure_collector() -> Result<(), String> {
@@ -295,6 +327,7 @@ struct App {
     geometry_changed: Instant,
     x11_hints_pending: bool,
     x11_attempts: u8,
+    last_size: Option<egui::Vec2>,
 }
 impl App {
     fn new(
@@ -331,6 +364,7 @@ impl App {
             last_rect: None,
             geometry_changed: Instant::now(),
             x11_hints_pending: false,
+            last_size: None,
             x11_attempts: 0,
         }
     }
@@ -442,6 +476,14 @@ impl App {
             ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(native::level(
                 self.layer,
             )));
+        }
+        if !self.tray.fullscreen_edit {
+            if let Some(size) = self.tray.desired_size() {
+                if self.last_size != Some(size) {
+                    self.last_size = Some(size);
+                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
+                }
+            }
         }
         let was_customizing = self.tray.draft.is_some();
         let mut intents = self.tray.show(ctx, now());

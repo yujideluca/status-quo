@@ -99,6 +99,14 @@ pub struct WidgetInstance {
     pub options: BTreeMap<String, String>,
     pub height: f32,
     pub span: u8,
+    /// Free-form placement in pixels inside the tray canvas. `width == 0` means the
+    /// instance has no explicit size yet and follows the `span` flow.
+    #[serde(default)]
+    pub x: f32,
+    #[serde(default)]
+    pub y: f32,
+    #[serde(default)]
+    pub width: f32,
     pub hidden: bool,
     pub detached: bool,
     pub theme: Option<Theme>,
@@ -150,6 +158,9 @@ pub struct Config {
     pub navigation: bool,
     pub autostart: bool,
     pub locked: bool,
+    /// Space between widgets, in pixels; the flow layout, the stacking of new widgets and the
+    /// snapping of the editor all use this one value.
+    pub gap: f32,
     pub sources: SourceConfig,
     pub repositories: Vec<String>,
     pub geometry: BTreeMap<String, Geometry>,
@@ -166,6 +177,7 @@ impl Default for Config {
             navigation: true,
             autostart: true,
             locked: true,
+            gap: 10.0,
             sources: SourceConfig::default(),
             repositories: vec![],
             geometry: BTreeMap::new(),
@@ -211,6 +223,10 @@ impl Config {
         }
         self.next_id = self.next_id.checked_add(1).unwrap_or(1);
         let wide = matches!(kind, "sessions" | "activity" | "memory");
+        let free = self
+            .widgets
+            .iter()
+            .any(|w| !w.hidden && !w.detached && w.width > 0.0);
         self.widgets.push(WidgetInstance {
             id: id.clone(),
             kind: kind.into(),
@@ -218,6 +234,11 @@ impl Config {
             options: BTreeMap::new(),
             height: if kind == "quota" { 190.0 } else { 260.0 },
             span: if wide { 2 } else { 1 },
+            x: 0.0,
+            y: 0.0,
+            // In a free canvas the new widget gets an explicit rectangle at the top-left corner,
+            // where it is visible and can be dragged, instead of stacking below the screen.
+            width: if free { 420.0 } else { 0.0 },
             hidden: false,
             detached: false,
             theme: None,
@@ -229,6 +250,9 @@ impl Config {
             return Err("Unsupported configuration version; original retained".into());
         }
         self.theme.validate()?;
+        if !self.gap.is_finite() || !(0.0..=64.0).contains(&self.gap) {
+            return Err("Space between widgets must be 0 to 64 pixels".into());
+        }
         if self.widgets.len() > 128 || self.presets.len() > 32 || self.repositories.len() > 100 {
             return Err("Configuration exceeds widget/preset/repository bounds".into());
         }
@@ -242,7 +266,12 @@ impl Config {
                 || w.provider.len() > 100
                 || !(1..=2).contains(&w.span)
                 || !w.height.is_finite()
-                || !(100.0..=1_400.0).contains(&w.height)
+                || !(60.0..=8_000.0).contains(&w.height)
+                || !(w.width == 0.0 || (120.0..=8_000.0).contains(&w.width))
+                || !w.x.is_finite()
+                || !w.y.is_finite()
+                || !(0.0..=20_000.0).contains(&w.x)
+                || !(0.0..=20_000.0).contains(&w.y)
                 || w.options.len() > 32
                 || w.options
                     .iter()

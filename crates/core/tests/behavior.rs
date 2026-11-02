@@ -189,3 +189,52 @@ fn imported_presets_and_paths_receive_the_same_validation_as_active_settings() {
     assert!(config.validate().is_err());
     assert!(validate_repository("../repo").is_err());
 }
+
+// REQ SQ-2 SQ-29
+#[test]
+fn free_form_widget_rectangles_are_validated_and_old_configs_still_load() {
+    let mut config = Config::default();
+    let mut json: serde_json::Value = serde_json::to_value(&config).unwrap();
+    for w in json["widgets"].as_array_mut().unwrap() {
+        let o = w.as_object_mut().unwrap();
+        o.remove("x");
+        o.remove("y");
+        o.remove("width");
+    }
+    let old: Config = serde_json::from_value(json).unwrap();
+    assert!(old.widgets.iter().all(|w| w.width == 0.0));
+    old.validate().unwrap();
+    config.widgets[0].width = 3_000.0;
+    config.widgets[0].height = 2_000.0;
+    config.widgets[0].x = 1_500.0;
+    config.widgets[0].y = 900.0;
+    config.validate().unwrap();
+    for bad in [
+        |w: &mut WidgetInstance| w.width = 50.0,
+        |w: &mut WidgetInstance| w.width = f32::NAN,
+        |w: &mut WidgetInstance| w.x = -1.0,
+        |w: &mut WidgetInstance| w.y = f32::INFINITY,
+        |w: &mut WidgetInstance| w.height = 10.0,
+    ] {
+        let mut candidate = config.clone();
+        bad(&mut candidate.widgets[1]);
+        assert!(candidate.validate().is_err());
+    }
+}
+
+// REQ SQ-2 SQ-29
+#[test]
+fn a_widget_added_to_a_free_canvas_lands_visible_with_its_own_rectangle() {
+    let mut config = Config::default();
+    let before = config.add_widget("quota", "claude");
+    assert_eq!(
+        config.widget(&before).unwrap().width,
+        0.0,
+        "flow layouts stay flow layouts"
+    );
+    config.widgets[0].width = 500.0;
+    let id = config.add_widget("quota", "claude");
+    let added = config.widget(&id).unwrap();
+    assert!(added.width > 0.0 && added.x == 0.0 && added.y == 0.0);
+    config.validate().unwrap();
+}
