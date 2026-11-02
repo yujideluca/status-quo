@@ -16,6 +16,8 @@ pub struct Tray {
     pub error: Option<String>,
     pub capabilities: String,
     pub connected: bool,
+    /// Desktop-widget look: no tray background or title, only the widgets and two buttons.
+    pub bare: bool,
     pub registry: Registry,
     styles: BTreeMap<String, StyleFactory>,
     applied: Option<(Theme, bool)>,
@@ -33,6 +35,7 @@ impl Tray {
             error: None,
             capabilities: String::new(),
             connected: false,
+            bare: false,
             registry: sq_widgets::registry(),
             styles,
             applied: None,
@@ -90,40 +93,68 @@ impl Tray {
             });
             self.applied = Some((theme.clone(), system_dark));
         }
+        let bare = self.bare && self.draft.is_none();
+        let chip_fill = background(&theme);
+        let chip_stroke = egui::Stroke::new(1.0, color(theme.palette.muted).gamma_multiply(0.35));
         egui::TopBottomPanel::top("header")
-            .frame(
+            .frame(if bare {
+                egui::Frame::NONE.inner_margin(egui::Margin {
+                    left: 0,
+                    right: 0,
+                    top: 0,
+                    bottom: 8,
+                })
+            } else {
                 egui::Frame::NONE
                     .fill(background(&theme))
-                    .inner_margin(12.0),
-            )
+                    .inner_margin(12.0)
+            })
+            .show_separator_line(false)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new("◉ STATUS QUO")
-                            .strong()
-                            .color(color(theme.palette.accent)),
-                    );
-                    ui.label(
-                        RichText::new(if self.connected {
-                            "● connected"
-                        } else {
-                            "○ reconnecting"
-                        })
-                        .small()
-                        .color(color(theme.palette.muted)),
-                    );
+                    if !bare {
+                        ui.label(
+                            RichText::new("◉ STATUS QUO")
+                                .strong()
+                                .color(color(theme.palette.accent)),
+                        );
+                    }
+                    if !bare || !self.connected {
+                        ui.label(
+                            RichText::new(if self.connected {
+                                "● connected"
+                            } else {
+                                "○ reconnecting"
+                            })
+                            .small()
+                            .color(color(theme.palette.muted)),
+                        );
+                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .selectable_label(self.draft.is_some(), "Customize")
-                            .clicked()
-                        {
+                        let customize = if bare {
+                            ui.add(
+                                egui::Button::new("Customize")
+                                    .fill(chip_fill)
+                                    .stroke(chip_stroke),
+                            )
+                        } else {
+                            ui.selectable_label(self.draft.is_some(), "Customize")
+                        };
+                        if customize.clicked() {
                             if self.draft.is_some() {
                                 self.cancel_customization();
                             } else {
                                 self.begin_customization();
                             }
                         }
-                        ui.menu_button("+ Add widget", |ui| {
+                        let add_button = if bare {
+                            egui::Button::new("+ Add widget")
+                                .fill(chip_fill)
+                                .stroke(chip_stroke)
+                        } else {
+                            egui::Button::new("+ Add widget")
+                        };
+                        egui::menu::menu_custom_button(ui, add_button, |ui| {
                             for descriptor in self.registry.descriptors() {
                                 for provider in descriptor.providers {
                                     if ui
@@ -150,17 +181,20 @@ impl Tray {
                 }
             });
         egui::CentralPanel::default()
-            .frame(
+            .frame(if bare {
+                egui::Frame::NONE
+            } else {
                 egui::Frame::NONE
                     .fill(background(&theme))
-                    .inner_margin(12.0),
-            )
+                    .inner_margin(12.0)
+            })
             .show(ctx, |ui| {
                 if self.draft.is_some() {
                     self.settings(ui, &mut intents);
                 } else {
                     egui::ScrollArea::vertical()
                         .id_salt("tray-scroll")
+                        .auto_shrink([false, false])
                         .show(ui, |ui| {
                             let rows = layout(&self.config.widgets, ui.available_width());
                             if rows.is_empty() {
@@ -168,18 +202,45 @@ impl Tray {
                                 ui.heading("Your tray is empty");
                                 ui.label("Use + Add widget to put a widget here.");
                             }
-                            for row in rows {
+                            // Bare tray: row heights are scaled so the rows fill the space exactly.
+                            let gap = ui.spacing().item_spacing.y;
+                            let row_heights: Vec<f32> = rows
+                                .iter()
+                                .map(|row| {
+                                    row.ids
+                                        .iter()
+                                        .filter_map(|id| self.config.widget(id))
+                                        .map(|w| w.height)
+                                        .fold(80.0, f32::max)
+                                })
+                                .collect();
+                            let total: f32 = row_heights.iter().sum();
+                            let space =
+                                ui.available_height() - gap * rows.len().saturating_sub(1) as f32;
+                            let scale = if bare {
+                                layout::fit_scale(total, space)
+                            } else {
+                                1.0
+                            };
+                            for (row, row_height) in rows.into_iter().zip(row_heights) {
                                 let width = (ui.available_width()
                                     - 10.0 * (row.ids.len() - 1) as f32)
                                     / row.ids.len() as f32;
+                                let cell = row_height * scale;
                                 ui.horizontal_top(|ui| {
                                     for id in row.ids {
                                         if let Some(instance) = self.config.widget(&id) {
+                                            let height = if bare { cell } else { instance.height };
                                             ui.allocate_ui_with_layout(
-                                                Vec2::new(width, instance.height),
+                                                Vec2::new(width, height),
                                                 egui::Layout::top_down(egui::Align::Min),
                                                 |ui| {
-                                                    intents.extend(self.widget(ui, instance, now));
+                                                    intents.extend(self.widget(
+                                                        ui,
+                                                        instance,
+                                                        now,
+                                                        bare.then_some(cell),
+                                                    ));
                                                 },
                                             );
                                         }
@@ -208,10 +269,13 @@ impl Tray {
                     if class == egui::ViewportClass::Embedded {
                         egui::Window::new(format!("{} / {}", instance.provider, instance.kind))
                             .id(egui::Id::new(&instance.id))
-                            .show(ctx, |ui| intents.extend(self.widget(ui, instance, now)));
+                            .show(ctx, |ui| {
+                                intents.extend(self.widget(ui, instance, now, None))
+                            });
                     } else {
-                        egui::CentralPanel::default()
-                            .show(ctx, |ui| intents.extend(self.widget(ui, instance, now)));
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            intents.extend(self.widget(ui, instance, now, None))
+                        });
                         if ctx.input(|i| i.viewport().close_requested()) {
                             let mut widget = instance.clone();
                             widget.detached = false;
@@ -223,7 +287,13 @@ impl Tray {
         }
         intents
     }
-    fn widget(&self, ui: &mut egui::Ui, instance: &WidgetInstance, now: i64) -> Vec<Intent> {
+    fn widget(
+        &self,
+        ui: &mut egui::Ui,
+        instance: &WidgetInstance,
+        now: i64,
+        fit: Option<f32>,
+    ) -> Vec<Intent> {
         let mut intents = Vec::new();
         let view = self.registry.view(instance, &self.snapshot, now);
         let resolved = resolved_theme(
@@ -248,6 +318,9 @@ impl Tray {
                 .inner_margin(12.0)
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width().max(160.0));
+                    if let Some(height) = fit {
+                        ui.set_min_height((height - 26.0).max(0.0));
+                    }
                     ui.horizontal(|ui| {
                         ui.label(
                             RichText::new(&view.title)
@@ -310,7 +383,7 @@ impl Tray {
                             intents.push(Intent::Configure(ConfigAction::Widget(Box::new(widget))));
                         }
                     }
-                    let available = (instance.height
+                    let available = (fit.unwrap_or(instance.height)
                         - if instance.kind == "tokens" {
                             100.0
                         } else {
@@ -319,6 +392,7 @@ impl Tray {
                     .max(80.0);
                     egui::ScrollArea::vertical()
                         .id_salt("contents")
+                        .auto_shrink([false, fit.is_none()])
                         .max_height(available)
                         .show(ui, |ui| {
                             for node in &view.nodes {

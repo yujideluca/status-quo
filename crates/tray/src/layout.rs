@@ -32,3 +32,30 @@ pub fn layout(widgets: &[WidgetInstance], width: f32) -> Vec<LayoutRow> {
     }
     rows
 }
+
+/// Scale applied to row heights so the rows plus gaps fill `space` exactly.
+/// Never below 0.6: smaller rows would crush content, so the tray scrolls instead.
+pub fn fit_scale(total_height: f32, space: f32) -> f32 {
+    if total_height <= 0.0 {
+        return 1.0;
+    }
+    (space / total_height).max(0.6)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fit_scale;
+
+    // REQ SQ-28: rows grow or shrink so the widgets fill the tray space exactly.
+    #[test]
+    fn rows_fill_the_space_exactly_until_the_minimum_scale() {
+        assert_eq!(fit_scale(500.0, 1000.0), 2.0);
+        assert_eq!(fit_scale(1000.0, 500.0), 0.6);
+        assert_eq!(fit_scale(0.0, 500.0), 1.0);
+        let heights = [130.0_f32, 200.0, 200.0];
+        let total: f32 = heights.iter().sum();
+        let scale = fit_scale(total, 900.0);
+        let filled: f32 = heights.iter().map(|h| h * scale).sum();
+        assert!((filled - 900.0).abs() < 0.01);
+    }
+}

@@ -154,6 +154,7 @@ fn run() -> Result<(), String> {
         let ctx = egui::Context::default();
         let mut app = App::new(ctx.clone(), *config, revision, None, false);
         app.tray.capabilities = format!("Layer-shell surface: {}", selection.note);
+        app.tray.bare = true;
         let request = host::layer::Request {
             width,
             height,
@@ -212,6 +213,7 @@ fn run() -> Result<(), String> {
             );
             app.tray.capabilities = format!("{} {}", selection.note, native::capabilities());
             app.x11_hints_pending = desktop_hints;
+            app.tray.bare = desktop_hints;
             Ok(Box::new(app))
         }),
     )

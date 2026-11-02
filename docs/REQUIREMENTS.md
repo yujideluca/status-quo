@@ -31,3 +31,4 @@ Approved scope: `2026-11-01-status-quo-design.md` plus independent removable/int
 | SQ-25 | Verify installed package/startup/uninstall, template gate/CI and source-matched wiki translations | G |
 | SQ-26 | A host compatibility layer chooses layer-shell, X11 desktop hints or a plain window at run time from the real session, honors a forced choice only when it can work, and reports what was chosen and why | G |
 | SQ-27 | Layer-shell host shows the tray frameless on the desktop layer (below windows by default, anchored to an edge or corner, validated size), accepts pointer input, and costs no frames while idle | G |
+| SQ-28 | Desktop-widget look: the tray itself has no background or title, only the widgets and the Add widget and Customize buttons are visible, and the widget rows fill the tray space exactly | G |
