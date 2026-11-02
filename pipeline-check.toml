@@ -1,0 +1,33 @@
+# Initial scope baseline: retain the template's 1200-second gate limit.
+# Limit changes require Giovanni's decision and a DESIGN.md decision-log row.
+projeto = "Status Quo"
+aviso_a = 0.8
+[gate]
+command = "tools/quality_gate.sh"
+required = true
+[architecture]
+# Pinned v0.4 checks Java/Kotlin; the gate runs tools/rust_architecture.rs for Rust.
+pure_dirs = []
+build_files = []
+[[fitness]]
+id = "gate-segundos"
+kind = "gate_seconds"
+limit = 1200
+[github]
+repo = "yujideluca/status-quo"
+branch = "main"
+required_check = "gate"
+[dora]
+days = 30
+decision_log = "DESIGN.md"
+[pre_push]
+guard = []
+[traceability]
+[[traceability.sources]]
+dir = "crates"
+extensions = ["rs"]
+[[traceability.sources]]
+dir = "tools"
+extensions = ["rs"]
+[shellcheck]
+extra_files = ["tools/hooks/pre-push"]

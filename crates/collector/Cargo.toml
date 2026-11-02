@@ -1,0 +1,15 @@
+[package]
+name = "sq-collector"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+[dependencies]
+sq-core.workspace = true
+sq-contract.workspace = true
+sq-store = { path = "../store" }
+sq-sources = { path = "../sources" }
+serde.workspace = true
+serde_json.workspace = true
+notify = "7"
+fs2 = "0.4"

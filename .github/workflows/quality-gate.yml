@@ -1,0 +1,33 @@
+name: quality-gate
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@1.87.0
+        with:
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+      - name: Native Linux build dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libx11-dev libxkbcommon-dev libwayland-dev libgl1-mesa-dev
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pipeline-check
+          key: pipeline-check-${{ hashFiles('pipeline-check.version') }}
+      - run: tools/pipeline-check.sh --mode ci
+      - name: Browser portable build
+        run: cargo build --locked --release --target wasm32-unknown-unknown -p sq-web
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-report
+          path: build/pipeline-check/report.json
+          retention-days: 14

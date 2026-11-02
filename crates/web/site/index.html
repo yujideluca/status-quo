@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Status Quo · browser reuse sample</title>
+<style>
+html,body { margin:0; width:100%; height:100%; overflow:hidden; background:#101510; color:#bce7c5; font-family:monospace }
+#status-quo { width:100%; height:100%; display:block }
+#loading { position:absolute; left:1rem; top:1rem; max-width:90%; pointer-events:none }
+</style>
+</head>
+<body>
+<canvas id="status-quo" aria-label="Status Quo synthetic browser sample"></canvas>
+<div id="loading" role="status">Loading the Rust browser sample…</div>
+<script type="module">
+import init from './pkg/sq_web.js';
+init().catch(error => { document.getElementById('loading').textContent = `Could not load the browser sample: ${error}`; });
+</script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+[package]
+name = "sq-tray"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+[dependencies]
+sq-core.workspace = true
+sq-contract.workspace = true
+sq-widgets.workspace = true
+serde_json.workspace = true
+egui = "0.31.1"

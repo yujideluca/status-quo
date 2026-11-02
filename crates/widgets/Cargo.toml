@@ -1,0 +1,11 @@
+[package]
+name = "sq-widgets"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+sq-core.workspace = true
+sq-contract.workspace = true
+serde_json.workspace = true

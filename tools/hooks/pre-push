@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Local stand-in for branch protection (a private repository on the free GitHub plan cannot require the CI job):
+# before main is pushed, the pipeline-check program runs the gate and the local checks; a `falha` stops the push.
+# The logic and its tests live in the program (PC-13); which paths are worth checking is `[pre_push] guard` in pipeline-check.toml.
+# Enable once per clone:  git config core.hooksPath tools/hooks      Bypass on purpose:  git push --no-verify
+exec "$(git rev-parse --show-toplevel)/tools/pipeline-check.sh" --pre-push

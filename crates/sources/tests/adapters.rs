@@ -1,0 +1,202 @@
+use serde_json::json;
+use sq_sources::*;
+#[test] // REQ SQ-5 SQ-6: primary is not necessarily the five-hour window.
+fn account_windows_keep_durations_model_labels_and_unknowns() {
+    let value = json!({"rateLimits":{"primary":{"usedPercent":23.0,"windowDurationMins":10080,"resetsAt":500},"secondary":null},"rateLimitsByLimitId":null});
+    let usage = codex_usage(&value, 100).unwrap();
+    assert!(usage.window(300).is_none());
+    assert_eq!(usage.window(10080).unwrap().used, 23.0);
+    let usage=claude_usage(&json!({"five_hour":{"utilization":40,"resets_at":"2026-11-03T00:00:00Z"},"seven_day":null,"seven_day_sonnet":{"utilization":5,"resets_at":null}}),100).unwrap();
+    assert_eq!(usage.window(300).unwrap().used, 40.0);
+    assert!(usage.windows.iter().any(|w| w.label == "seven_day_sonnet"));
+    assert!(claude_usage(&json!({"five_hour":{"utilization":-1}}), 100).is_err());
+}
+#[test] // REQ SQ-4 SQ-7: normalize included Codex cache, deltas, duplicate and reset totals.
+fn codex_cumulative_usage_counts_each_delta_once() {
+    let mut parser = LogParser::new("codex", "session");
+    let event = |input, cache, output| json!({"timestamp":"2026-11-02T00:00:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":input,"cached_input_tokens":cache,"output_tokens":output}}}});
+    let first = parser.ingest(&event(100, 30, 10)).unwrap().unwrap();
+    assert_eq!(
+        (first.input, first.cache_read, first.output),
+        (70, Some(30), 10)
+    );
+    assert!(parser.ingest(&event(100, 30, 10)).unwrap().is_none());
+    let next = parser.ingest(&event(120, 35, 13)).unwrap().unwrap();
+    assert_eq!((next.input, next.cache_read, next.output), (15, Some(5), 3));
+    let reset = parser.ingest(&event(10, 0, 1)).unwrap().unwrap();
+    assert_eq!(reset.input, 10);
+    assert!(parser.ingest(&event(10, 11, 1)).is_err());
+}
+#[test] // REQ SQ-7 SQ-24: Claude message identity and missing cache stay distinct.
+fn claude_stream_revisions_share_message_identity_without_persisting_content() {
+    let mut parser = LogParser::new("claude", "session");
+    let event = |out| json!({"timestamp":"2026-11-02T00:00:00Z","type":"assistant","message":{"id":"msg-1","content":[{"text":"private conversation"}],"usage":{"input_tokens":100,"output_tokens":out}}});
+    let first = parser.ingest(&event(2)).unwrap().unwrap();
+    let second = parser.ingest(&event(3)).unwrap().unwrap();
+    assert_eq!(first.id, second.id);
+    assert_eq!(second.cache_read, None);
+    assert_eq!(second.input, 100);
+    assert!(!serde_json::to_string(&second)
+        .unwrap()
+        .contains("private conversation"));
+}
+#[test] // REQ SQ-11: historic event feed never silently accepts malformed metadata.
+fn memory_frontmatter_requires_identity_timestamp_and_known_event_kind() {
+    let text="---\ntype: decision\ninstance: codex\nkey: tray\nts: 2026-11-02T00:00:00Z\n---\nIndependent widgets";
+    let item = memory_event(text, "20261102T000000Z-codex-abc", "/events/item.md").unwrap();
+    assert_eq!(item.kind, "decision");
+    assert_eq!(item.instance, "codex");
+    assert!(memory_event("broken", "id", "/events/bad.md").is_err());
+    assert!(memory_event(&text.replace("decision", "madeup"), "id", "/events/bad.md").is_err());
+}
+#[test] // REQ SQ-7: a trailing partial line is deferred and read exactly once after completion.
+fn incremental_reader_resumes_partial_lines_and_reports_bad_records() {
+    use std::fs;
+    let path = std::env::temp_dir().join(format!("sq-log-{}.jsonl", std::process::id()));
+    let line = r#"{"timestamp":"2026-11-02T00:00:00Z","type":"assistant","message":{"id":"one","usage":{"input_tokens":10,"output_tokens":2}}}"#;
+    fs::write(&path, format!("bad\n{}", &line[..40])).unwrap();
+    let mut cursor = Cursor::new("claude", "test");
+    let mut ledger = sq_core::TokenLedger::default();
+    let first = cursor.poll(&path, &mut ledger, 1024 * 1024).unwrap();
+    assert_eq!(first.malformed, 1);
+    assert_eq!(first.deferred, 1);
+    assert!(ledger.records.is_empty());
+    fs::write(&path, format!("bad\n{line}\n")).unwrap();
+    cursor.poll(&path, &mut ledger, 1024 * 1024).unwrap();
+    assert_eq!(ledger.records.len(), 1);
+    cursor.poll(&path, &mut ledger, 1024 * 1024).unwrap();
+    assert_eq!(ledger.records.len(), 1);
+    fs::write(&path, format!("{line}\n")).unwrap();
+    let rotated = cursor.poll(&path, &mut ledger, 1024 * 1024).unwrap();
+    assert!(rotated.rotated);
+    assert_eq!(ledger.records.len(), 1);
+    fs::remove_file(path).unwrap();
+}
+#[test] // REQ SQ-10: endpoint records normalize with stable IDs and PRs aren't duplicated as issues.
+fn github_records_keep_stable_identity_and_do_not_count_prs_twice() {
+    let issue = json!({"id":42,"title":"Fix tray","updated_at":"2026-11-02T00:00:00Z","html_url":"https://github.com/owner/repo/issues/3"});
+    let items = github_records("owner/repo", "issues", &json!([issue.clone()])).unwrap();
+    assert_eq!(items.len(), 1);
+    let mut pr = issue;
+    pr["pull_request"] = json!({});
+    assert!(github_records("owner/repo", "issues", &json!([pr]))
+        .unwrap()
+        .is_empty());
+    assert!(github_records("bad;command/repo", "issues", &json!([])).is_err());
+    assert!(github_records("owner/repo", "issues", &json!([{"title":"no identity"}])).is_err());
+}
+#[test] // REQ SQ-5: seven_day_breakdown is metadata, not a quota window.
+fn claude_breakdown_metadata_does_not_hide_valid_account_limits() {
+    let usage=claude_usage(&json!({"five_hour":{"utilization":33},"seven_day":{"utilization":66},"seven_day_breakdown":{"some_breakdown":[]}}),100).unwrap();
+    assert_eq!(usage.windows.len(), 2);
+    assert_eq!(usage.window(300).unwrap().used, 33.0);
+}
+#[test] // REQ SQ-8 SQ-9 SQ-24: hooks discard prompt/tool contents and Stop means waiting, not proven goal completion.
+fn lifecycle_events_keep_only_labels_and_explicit_states() {
+    let input = json!({"session_id":"main-1","cwd":"/tmp/project","prompt":"secret prompt must not persist","hook_event_name":"UserPromptSubmit"});
+    let event = lifecycle_event("claude", "UserPromptSubmit", &input, 100, 1).unwrap();
+    assert_eq!(event.state, sq_core::SessionState::Running);
+    assert!(!serde_json::to_string(&event).unwrap().contains("secret"));
+    let event = lifecycle_event("claude", "Stop", &input, 101, 2).unwrap();
+    assert_eq!(event.state, sq_core::SessionState::Waiting);
+    let child = lifecycle_event(
+        "claude",
+        "SubagentStop",
+        &json!({"session_id":"main-1","agent_id":"child-1","cwd":"/tmp/project"}),
+        102,
+        3,
+    )
+    .unwrap();
+    assert_eq!(child.parent, Some("main-1".into()));
+    assert_eq!(child.state, sq_core::SessionState::Completed);
+    assert!(lifecycle_event(
+        "claude",
+        "UserPromptSubmit",
+        &json!({"session_id":"../../escape"}),
+        1,
+        1
+    )
+    .is_err());
+}
+
+// REQ SQ-10: a running check has null completion and a real start timestamp.
+#[test]
+fn running_github_checks_keep_their_start_timestamp() {
+    let value = json!({"check_runs":[{"id":7,"name":"CI","completed_at":null,"started_at":"2026-11-02T00:00:00Z","html_url":"https://github.com/o/r/actions/runs/7"}]});
+    let records = github_records("o/r", "checks", &value).unwrap();
+    assert_eq!(records[0].at, timestamp("2026-11-02T00:00:00Z").unwrap());
+}
+
+// REQ SQ-11 SQ-24: bounded memory excerpts identify omitted text explicitly.
+#[test]
+fn memory_excerpt_marks_truncation() {
+    let text = format!(
+        "---\ntype: decision\nts: 2026-11-02T00:00:00Z\n---\n{}",
+        "x".repeat(8001)
+    );
+    let item = memory_event(&text, "id", "/tmp/event.md").unwrap();
+    assert!(item.body.contains("excerpt truncated"));
+}
+
+// REQ SQ-4 SQ-7: rotating a cumulative transcript keeps its baseline and stable observed totals.
+#[test]
+fn codex_rotation_does_not_replace_old_deltas_or_count_totals_again() {
+    use std::fs;
+    let root = std::env::temp_dir().join(format!("sq-rotation-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("session.jsonl");
+    let event = |sec, input| {
+        format!(
+            "{}\n",
+            json!({"timestamp":format!("2026-11-02T00:00:{sec:02}Z"),"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":input,"cached_input_tokens":0,"output_tokens":0}}}})
+        )
+    };
+    let mut cursor = Cursor::new("codex", "session");
+    let mut ledger = sq_core::TokenLedger::default();
+    fs::write(&path, format!("{}{}", event(1, 100), event(2, 120))).unwrap();
+    cursor.poll(&path, &mut ledger, 10000).unwrap();
+    fs::rename(&path, root.join("old.jsonl")).unwrap();
+    fs::write(&path, format!("{}{}", event(2, 120), event(3, 150))).unwrap();
+    cursor.poll(&path, &mut ledger, 10000).unwrap();
+    assert_eq!(
+        ledger
+            .buckets("codex", 0, i64::MAX, 1)
+            .unwrap()
+            .iter()
+            .map(|r| r.input)
+            .sum::<u64>(),
+        150
+    );
+    assert_eq!(ledger.records.len(), 3);
+    fs::remove_dir_all(root).unwrap();
+}
+
+// REQ SQ-7 SQ-18: a changed configured root stops reading old paths but keeps retained token observations.
+#[test]
+fn changing_source_root_excludes_old_cursors() {
+    let mut state = LocalState::default();
+    state.cursors.insert(
+        "/old/claude/projects/session.jsonl".into(),
+        Cursor::new("claude", "session"),
+    );
+    let config = sq_core::SourceConfig {
+        claude: "/nonexistent/status-quo-new".into(),
+        codex: "/nonexistent/status-quo-other".into(),
+        ..Default::default()
+    };
+    state.discover(&config, 100).unwrap();
+    assert!(state.cursors.is_empty());
+}
+
+// REQ SQ-6 SQ-19: closing stdout cannot bypass a provider command deadline.
+#[test]
+fn provider_process_exit_is_bounded_after_stdout_closes() {
+    let start = std::time::Instant::now();
+    let result = command_json(
+        "sh",
+        &["-c", "printf '{}'; exec 1>&-; exec sleep 2"],
+        std::time::Duration::from_millis(60),
+    );
+    assert!(start.elapsed() < std::time::Duration::from_millis(500));
+    assert!(result.is_err());
+}

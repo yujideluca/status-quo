@@ -1,0 +1,23 @@
+[package]
+name = "status-quo"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+[dependencies]
+sq-core.workspace = true
+sq-contract.workspace = true
+sq-widgets.workspace = true
+sq-tray = { path = "../tray" }
+sq-collector = { path = "../collector" }
+sq-store = { path = "../store" }
+sq-sources = { path = "../sources" }
+serde_json.workspace = true
+eframe = { version = "0.31.1", default-features = false, features = ["default_fonts", "glow", "x11", "wayland"] }
+x11rb = { version = "0.13", features = ["randr"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+winit = { version = "0.30", default-features = false, features = ["x11", "wayland"] }
+fs2 = "0.4"
+sha2 = "0.10"
+
+ctrlc = { version = "3", features = ["termination"] }
