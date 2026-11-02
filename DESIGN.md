@@ -36,6 +36,7 @@ The gate runs Rust formatting, Clippy with warnings denied, workspace tests, bou
 
 | Date | Type | Decision | Why |
 |---|---|---|---|
+| 2026-11-02 | Corrective | Add host compatibility layer (layer-shell, X11 hints, plain window chosen at run time); tray becomes a frameless desktop-layer surface ([ADR-0003](docs/adr/0003-host-compatibility-layer.md)) | Giovanni: Status Quo must be a desktop widget environment and portable across Linux versions; a framed window is not one |
 | 2026-11-02 | Corrective | Collector creates its own private `events` directory before watching it | A missing watched path forced the 2-second polling fallback and raised idle CPU from about 2% to 7.7% of one core; SQ-23 (under 1%) is still not met |
 | 2026-11-02 | Preventive | Add project-specific Rust boundary detector and planted-defect self-tests; retain shared pipeline v0.4.0 and inherited 1200-second gate limit | Shared scanner supports Java/Kotlin, so an empty legacy scan must not imply Rust architectural verification |
 | 2026-11-01 | Initial | Register reusable widget models and egui tray independently of the KDE-first Linux wrapper; versioned local collector transport ([ADR-0002](docs/adr/0002-portable-rust-widgets.md)) | User requires removable/interchangeable widgets and reuse of both widgets and tray in other environments |

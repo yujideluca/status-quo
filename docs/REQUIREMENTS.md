@@ -29,3 +29,5 @@ Approved scope: `2026-11-01-status-quo-design.md` plus independent removable/int
 | SQ-23 | Laptop acceptance: under 1% of one core over five idle minutes, under 200 MiB collector+panel RSS and normal interaction within 100 ms | D |
 | SQ-24 | No analytics, prompt transmission, generation or credential writes; diagnostics/history contain no complete conversations | G |
 | SQ-25 | Verify installed package/startup/uninstall, template gate/CI and source-matched wiki translations | G |
+| SQ-26 | A host compatibility layer chooses layer-shell, X11 desktop hints or a plain window at run time from the real session, honors a forced choice only when it can work, and reports what was chosen and why | G |
+| SQ-27 | Layer-shell host shows the tray frameless on the desktop layer (below windows by default, anchored to an edge or corner, validated size), accepts pointer input, and costs no frames while idle | G |

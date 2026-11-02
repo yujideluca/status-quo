@@ -2234,6 +2234,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "pollster"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f3a9f18d041e6d0e102a0a46750538147e5e8992d3b4873aaafee2520b00ce3"
+
+[[package]]
 name = "potential_utf"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2914,10 +2920,14 @@ version = "0.1.0"
 dependencies = [
  "ctrlc",
  "eframe",
+ "egui-wgpu",
  "fs2",
  "image",
+ "pollster",
+ "raw-window-handle",
  "serde_json",
  "sha2",
+ "smithay-client-toolkit 0.19.2",
  "sq-collector",
  "sq-contract",
  "sq-core",
@@ -2925,6 +2935,7 @@ dependencies = [
  "sq-store",
  "sq-tray",
  "sq-widgets",
+ "wgpu",
  "winit",
  "x11rb",
 ]

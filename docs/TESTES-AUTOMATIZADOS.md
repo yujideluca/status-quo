@@ -46,3 +46,17 @@ Release build, panel plus collector started by hand (not installed), `build/reso
 | 2 | Real state directory, after the fix below | 2.05 | 115 MiB | Failed (target 1%) |
 
 Memory meets the 200 MiB target. CPU does not. Run 1 exposed a real defect: the collector watched its own `events` directory, which did not exist until a lifecycle hook fired, and a failed watch forces the 2-second polling fallback. The collector now creates that directory (mode 0700) before watching it; test `owned_events_directory_is_private_and_avoids_polling_fallback`. Run 2 still sits above 1%: the panel uses about 0.4% and the collector about 1.2% with a steady rate plus a burst every ~25 seconds. The cause is not yet identified (ptrace and perf are blocked on this laptop; transcript activity from live assistant sessions is a suspect). Interaction latency (100 ms), window stacking, installation, uninstall and login startup are not yet observed. The installer was not run in this session because it edits the assistant hook files and the session's permission check refused that edit; it needs Giovanni's own run.
+
+### Host compatibility layer observations, 2026-11-02 (SQ-26, SQ-27)
+
+Plasma 6 on Wayland, Acer Nitro, release build.
+
+| Check | Observation |
+|---|---|
+| Backend choice | Auto selected layer-shell (compositor offers `zwlr_layer_shell_v1`); the note is printed at start and shown in the capabilities line |
+| Stacking | With Chrome maximized the surface was hidden behind it; on an empty virtual desktop it was visible, frameless, anchored top-right, no taskbar entry (screenshots by spectacle) |
+| Input | A virtual pointer (`/dev/uinput`) clicked "7d" on the empty desktop: the button highlighted and the chart redrew; "24h" restored the original setting |
+| X11 backend (forced) | After the window mapped, `_NET_WM_STATE` showed BELOW, SKIP_TASKBAR, SKIP_PAGER read back with `xprop`. STICKY was not accepted by KWin on XWayland (`_NET_WM_DESKTOP` stayed 0), so it is best effort. A real X11 session was not available and is untested |
+| Plain window (forced) | Opens as the earlier framed window |
+| 60-second idle sample | layer host 1.08% of one core, peak combined RSS 195 MB (panel about 156 MB, mostly shared GPU driver pages). This is not the five-minute acceptance run |
+| Not tested | keyboard input in the layer host (customization uses the window backend), GNOME or other compositors, fractional scaling, monitor hot-plug in layer mode, the 100 ms interaction limit |
