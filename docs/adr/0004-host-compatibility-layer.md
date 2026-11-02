@@ -1,4 +1,4 @@
-# ADR-0003: Host compatibility layer and widget-environment surfaces
+# ADR-0004: Host compatibility layer and widget-environment surfaces
 
 - Status: accepted
 - Date: 2026-11-02
