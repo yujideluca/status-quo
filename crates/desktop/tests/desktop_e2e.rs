@@ -159,7 +159,16 @@ impl Run {
         sleep(Duration::from_millis(400));
     }
     fn start_panel(&mut self) {
-        let child = Command::new(panel_binary())
+        let mut command = Command::new(panel_binary());
+        if std::env::var("STATUS_QUO_E2E_EMPTY_HOME").as_deref() == Ok("1") {
+            // Layout checks without the cold read of every real transcript, which can keep a
+            // private collector busy for minutes and starve the virtual mouse. The idle CPU
+            // figure of such a run says nothing about the real load.
+            let home = self.out.join("home");
+            let _ = fs::create_dir_all(&home);
+            command.env("HOME", home);
+        }
+        let child = command
             .env("STATUS_QUO_STATE_DIR", &self.state)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -515,7 +524,8 @@ fn desktop_end_to_end() {
         drag[1].as_f64().unwrap().abs() as f32,
     );
     let tray = tray_rect(&initial, screen, &baseline);
-    let from = (tray.0 + tray.2 / 2.0, tray.1 + 70.0);
+    // A quarter in from the left: the widget centre holds its Remove button.
+    let from = (tray.0 + tray.2 * 0.25, tray.1 + 70.0);
     mouse.drag(from, (from.0 + dx, from.1 + dy));
     run.shot("03-edit-after-move");
     mouse.click(done, toolbar_y);
@@ -796,6 +806,83 @@ fn desktop_end_to_end() {
         }
     }
     run.shot("09b-after-sticky");
+
+    // 8c. Anywhere on the desktop, and the centred Remove button (SQ-29).
+    {
+        let saved = run.config();
+        let tray = tray_rect(&saved, screen, &baseline);
+        let target = saved["widgets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .rfind(|w| w["width"].as_f64().unwrap_or(0.0) > 0.0)
+            .unwrap()
+            .clone();
+        // The last widget is drawn on top where widgets overlap (the one added in step 7 lies
+        // over the others), so it gets the pointer.
+        let id = target["id"].as_str().unwrap().to_string();
+        let count = saved["widgets"].as_array().unwrap().len();
+        let (edit_tray, _, _, button_y) = buttons(&run);
+
+        // Move it far left of the docked tray, off its centre (which holds Remove).
+        mouse.click(edit_tray, button_y);
+        let from = screen_point(&saved, &id, 0.25, 0.2, tray);
+        let widget_left = screen_point(&saved, &id, 0.0, 0.0, tray).0;
+        let dx = -(widget_left - 20.0);
+        mouse.drag(from, (from.0 + dx, from.1));
+        run.shot("10-edit-moved-left-of-tray");
+        mouse.click(done, toolbar_y);
+        sleep(Duration::from_secs(2));
+        run.shot("11-after-left-move");
+        let after = run.config();
+        let new_tray_x = after["geometry"]["tray"]["x"].as_f64().unwrap_or(f64::MAX);
+        let w = after["widgets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|w| w["id"] == id.as_str())
+            .unwrap()
+            .clone();
+        let desktop_x = new_tray_x + w["x"].as_f64().unwrap_or(0.0);
+        run.check(
+            "a widget can be placed far left of where the tray was docked",
+            (desktop_x - 20.0).abs() <= 12.0 && (new_tray_x as f32) < tray.0 - 50.0,
+            format!(
+                "widget at desktop x {desktop_x:.0} (wanted 20), tray x {new_tray_x:.0} was {:.0}",
+                tray.0
+            ),
+        );
+
+        // Remove then Cancel: the widget stays.
+        let saved = after;
+        let tray = tray_rect(&saved, screen, &baseline);
+        let (edit_tray, _, _, button_y) = buttons(&run);
+        mouse.click(edit_tray, button_y);
+        let centre = screen_point(&saved, &id, 0.5, 0.5, tray);
+        mouse.click(centre.0, centre.1);
+        run.shot("12-edit-after-remove-click");
+        mouse.click(cancel, toolbar_y);
+        sleep(Duration::from_secs(1));
+        run.check(
+            "Remove then Cancel keeps the widget",
+            run.config()["widgets"].as_array().unwrap().len() == count,
+            format!("{count} widgets before"),
+        );
+
+        // Remove then Done: the widget is gone.
+        mouse.click(edit_tray, button_y);
+        mouse.click(centre.0, centre.1);
+        mouse.click(done, toolbar_y);
+        sleep(Duration::from_secs(2));
+        run.shot("13-after-remove-done");
+        let after = run.config();
+        let widgets = after["widgets"].as_array().unwrap();
+        run.check(
+            "Remove then Done saves the tray without that widget",
+            widgets.len() == count - 1 && widgets.iter().all(|w| w["id"] != id.as_str()),
+            format!("{count} -> {}", widgets.len()),
+        );
+    }
 
     // 9. Restart: the layout and options persist and the panel comes back.
     let before = run.config();

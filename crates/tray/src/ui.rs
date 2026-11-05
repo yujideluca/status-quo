@@ -29,6 +29,8 @@ pub struct Tray {
     pub fullscreen_edit: bool,
     /// Screen position of the tray surface's top-left corner, set by a host that knows it.
     pub origin: egui::Vec2,
+    /// The draft has been moved into desktop coordinates for this editing session.
+    origin_applied: bool,
     /// Unsnapped rectangle of the border or widget being dragged, so a snap can be left again.
     drag_raw: Option<(String, layout::Edges, egui::Rect)>,
     /// Height available to the flow layout in the last normal frame.
@@ -59,6 +61,7 @@ impl Tray {
             edit_cells: Vec::new(),
             flow_cells: Vec::new(),
             fullscreen_edit: false,
+            origin_applied: false,
             origin: Vec2::ZERO,
             drag_raw: None,
             flow_space: 0.0,
@@ -94,8 +97,27 @@ impl Tray {
             let rects = fit_to_space(rects, self.flow_space);
             layout::freeze(&mut draft.widgets, &rects);
         }
+        self.origin_applied = false;
         self.draft = Some(draft);
         self.editing = true;
+    }
+    /// The host reports where the docked tray sits on the desktop, just before its surface
+    /// covers the whole output for editing (after `begin_edit`). Widget positions of the draft
+    /// then become desktop positions, so a widget can go left of or above the docked tray.
+    pub fn set_origin(&mut self, origin: Vec2) {
+        self.origin = origin;
+        if !self.editing || !self.fullscreen_edit || self.origin_applied {
+            return;
+        }
+        let Some(draft) = self.draft.as_mut() else {
+            return;
+        };
+        let rects: Vec<_> = layout::free_rects(&draft.widgets, draft.gap)
+            .into_iter()
+            .map(|(id, r)| (id, r.translate(origin)))
+            .collect();
+        layout::freeze(&mut draft.widgets, &rects);
+        self.origin_applied = true;
     }
     /// Size the tray wants its surface to have, once it is a free canvas.
     pub fn desired_size(&self) -> Option<Vec2> {
@@ -166,8 +188,9 @@ impl Tray {
             draft.geometry.insert(
                 "tray".into(),
                 Geometry {
-                    x: (self.origin.x + min.x).max(0.0),
-                    y: (self.origin.y + min.y).max(0.0),
+                    // Canvas positions are desktop positions while the editor covers the desktop.
+                    x: min.x.max(0.0),
+                    y: min.y.max(0.0),
                     width: size.x.max(330.0),
                     height: self.header_height + size.y.max(60.0),
                     monitor,
@@ -282,7 +305,7 @@ impl Tray {
                 let config = edit_config.as_ref().unwrap_or(&self.config);
                 if self.editing || layout::is_free(&config.widgets) {
                     let offset = if floating_toolbar {
-                        self.origin + egui::vec2(0.0, self.header_height)
+                        egui::vec2(0.0, self.header_height)
                     } else {
                         Vec2::ZERO
                     };
@@ -503,7 +526,16 @@ impl Tray {
             return;
         }
         let gap = draft.gap;
-        for EditOp::Drag(id, edges, delta) in ops {
+        for op in ops {
+            let (id, edges, delta) = match op {
+                EditOp::Remove(id) => {
+                    // Removing only edits the draft; Done saves it and Cancel brings it back.
+                    draft.widgets.retain(|w| w.id != id);
+                    self.drag_raw = None;
+                    continue;
+                }
+                EditOp::Drag(id, edges, delta) => (id, edges, delta),
+            };
             let others: Vec<egui::Rect> = layout::free_rects(&draft.widgets, gap)
                 .into_iter()
                 .filter(|(other, _)| other != &id)
@@ -945,6 +977,7 @@ fn fit_to_space(rects: Vec<(String, egui::Rect)>, space: f32) -> Vec<(String, eg
 }
 enum EditOp {
     Drag(String, layout::Edges, Vec2),
+    Remove(String),
 }
 /// Edit-mode overlay for one widget on the free canvas: the body moves it, every border and
 /// corner resizes it. Added after the content so it takes the pointer.
@@ -1069,6 +1102,16 @@ fn edit_handles(
         CursorIcon::ResizeNwSe,
         true,
     );
+    // Remove sits in the centre of the widget and is added last, so it takes the pointer
+    // before the body that moves the widget.
+    let remove = egui::Rect::from_center_size(rect.center(), egui::vec2(84.0, 28.0));
+    if ui
+        .put(remove, egui::Button::new("Remove"))
+        .on_hover_text("Remove this widget from the tray")
+        .clicked()
+    {
+        ops.push(EditOp::Remove(instance.id.clone()));
+    }
 }
 fn parse_import(text: &str) -> Result<Config, String> {
     if text.len() > 1024 * 1024 {

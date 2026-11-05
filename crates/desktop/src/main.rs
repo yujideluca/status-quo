@@ -252,7 +252,7 @@ impl host::layer::Frame for LayerApp {
         }
     }
     fn docked_origin(&mut self, origin: (f32, f32)) {
-        self.0.tray.origin = egui::vec2(origin.0, origin.1);
+        self.0.tray.set_origin(egui::vec2(origin.0, origin.1));
     }
     fn layer(&self) -> Layer {
         // While editing, the tray covers the desktop above windows so every widget can be reached.

@@ -338,7 +338,9 @@ fn dragging_the_body_moves_anywhere_and_done_saves_a_normalized_canvas() {
     let mut tray = editing_tray(&mut ui);
     let original = tray.config.clone();
     let id = original.widgets[0].id.clone();
-    let from = ui.cell(&tray, &id).center();
+    // Off-centre: the centre of a widget holds its Remove button.
+    let cell = ui.cell(&tray, &id);
+    let from = cell.min + cell.size() * egui::vec2(0.25, 0.2);
     ui.drag(&mut tray, from, from + egui::vec2(400.0, 250.0));
     let moved = tray.draft.as_ref().unwrap().widget(&id).unwrap().clone();
     assert!(
@@ -566,4 +568,95 @@ fn the_space_between_widgets_is_customizable_and_validated() {
     widgets.truncate(2);
     let rects = free_rects(&widgets, 24.0);
     assert_eq!(rects[1].1.top() - rects[0].1.bottom(), 24.0);
+}
+
+// REQ SQ-16 SQ-29
+#[test]
+fn a_remove_button_in_the_widget_centre_removes_it_from_the_draft_and_cancel_restores_it() {
+    let mut ui = Harness::new();
+    let mut tray = editing_tray(&mut ui);
+    let before = tray.draft.as_ref().unwrap().widgets.len();
+    assert!(before >= 2, "the default tray has several widgets");
+    let id = tray.config.widgets[0].id.clone();
+    let cell = ui.cell(&tray, &id);
+    let pos = cell.center();
+    // Pointer on the centre: the button, not the body drag, must receive the click.
+    ui.frame(&mut tray, vec![egui::Event::PointerMoved(pos)]);
+    let click = |pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    ui.frame(&mut tray, vec![click(true)]);
+    ui.frame(&mut tray, vec![click(false)]);
+    ui.frame(&mut tray, vec![]);
+    let draft = tray.draft.as_ref().unwrap();
+    assert_eq!(draft.widgets.len(), before - 1);
+    assert!(draft.widget(&id).is_none(), "the clicked widget is gone");
+    assert_eq!(tray.config.widgets.len(), before, "active config untouched");
+    ui.click(&mut tray, "Cancel");
+    assert_eq!(tray.config.widgets.len(), before);
+    assert!(tray.config.widget(&id).is_some());
+}
+
+// REQ SQ-16 SQ-29
+#[test]
+fn removing_a_widget_and_pressing_done_saves_the_smaller_tray() {
+    let mut ui = Harness::new();
+    let mut tray = editing_tray(&mut ui);
+    let before = tray.config.widgets.len();
+    let id = tray.config.widgets[0].id.clone();
+    let pos = ui.cell(&tray, &id).center();
+    ui.frame(&mut tray, vec![egui::Event::PointerMoved(pos)]);
+    let click = |pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    ui.frame(&mut tray, vec![click(true)]);
+    ui.frame(&mut tray, vec![click(false)]);
+    let mut intents = ui.click(&mut tray, "Done");
+    let Intent::Configure(action) = intents.remove(0) else {
+        panic!("Expected configuration submission")
+    };
+    let mut accepted = tray.config.clone();
+    accepted.apply(action).unwrap();
+    assert_eq!(accepted.widgets.len(), before - 1);
+    assert!(accepted.widget(&id).is_none());
+}
+
+// REQ SQ-16 SQ-29
+#[test]
+fn a_full_desktop_editor_places_widgets_left_of_and_above_the_docked_tray() {
+    let mut ui = Harness::new();
+    let mut tray = Tray::new(unlocked());
+    tray.fullscreen_edit = true;
+    ui.click(&mut tray, "Edit tray");
+    // The host reports the docked corner only after the editor has started.
+    tray.set_origin(egui::vec2(300.0, 200.0));
+    ui.frame(&mut tray, vec![]);
+    let id = tray.config.widgets[0].id.clone();
+    let cell = ui.cell(&tray, &id);
+    let from = cell.min + cell.size() * egui::vec2(0.25, 0.2);
+    ui.drag(&mut tray, from, from - egui::vec2(250.0, 100.0));
+    let moved = tray.draft.as_ref().unwrap().widget(&id).unwrap().clone();
+    assert!(
+        moved.x < 300.0 && moved.x >= 0.0,
+        "x {} is left of the docked tray but on the desktop",
+        moved.x
+    );
+    let mut intents = ui.click(&mut tray, "Done");
+    let Intent::Configure(action) = intents.remove(0) else {
+        panic!("Expected configuration submission")
+    };
+    let mut accepted = tray.config.clone();
+    accepted.apply(action).unwrap();
+    let g = &accepted.geometry["tray"];
+    assert!(
+        g.x < 300.0,
+        "the tray is saved where the widget was left: {}",
+        g.x
+    );
 }
