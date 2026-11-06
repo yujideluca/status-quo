@@ -248,7 +248,7 @@ fn repeated_discovery_matches_a_fresh_walk() {
     use std::time::{Duration, SystemTime};
     let root = std::env::temp_dir().join(format!("sq-rediscover-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
-    let projects = root.join(".claude/projects");
+    let projects = root.join(".claude").join("projects");
     let dirs = [
         "-tmp-a/memory",
         "-home-me-app/sess/subagents",
