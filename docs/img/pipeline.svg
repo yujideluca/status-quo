@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 360" role="img" aria-labelledby="t d">
+  <title id="t">How Status Quo works</title>
+  <desc id="d">Your accounts and files are read, never written, by one collector; widgets turn the data into pictures; the tray draws them.</desc>
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#c98b86"/></marker>
+  </defs>
+  <rect width="960" height="360" fill="#15110f"/>
+  <g font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13">
+    <!-- sources -->
+    <rect x="24" y="40" width="190" height="280" fill="#1d1815" stroke="#3a312b"/>
+    <text x="40" y="66" fill="#b9ab95">your computer</text>
+    <text x="40" y="104" fill="#e9dcc6">~/.claude</text>
+    <text x="40" y="136" fill="#e9dcc6">~/.codex</text>
+    <text x="40" y="168" fill="#e9dcc6">gh (GitHub)</text>
+    <text x="40" y="200" fill="#e9dcc6">memory notes</text>
+    <text x="40" y="232" fill="#e9dcc6">CPU · RAM · GPU</text>
+    <text x="40" y="296" fill="#8e939c">read-only</text>
+    <!-- collector -->
+    <rect x="268" y="90" width="170" height="180" fill="#1d1815" stroke="#c98b86"/>
+    <text x="284" y="118" fill="#e8b9ab">collector</text>
+    <text x="284" y="150" fill="#b9ab95">one per user</text>
+    <text x="284" y="172" fill="#b9ab95">keeps last good</text>
+    <text x="284" y="194" fill="#b9ab95">value + health</text>
+    <text x="284" y="230" fill="#8e939c">never freezes</text>
+    <text x="284" y="250" fill="#8e939c">the rest</text>
+    <!-- widgets -->
+    <rect x="492" y="60" width="190" height="240" fill="#1d1815" stroke="#c4c8cf"/>
+    <text x="508" y="88" fill="#e3e5ea">widgets</text>
+    <rect x="508" y="104" width="158" height="30" fill="none" stroke="#8e939c"/><text x="520" y="124" fill="#b9ab95">usage</text>
+    <rect x="508" y="144" width="158" height="30" fill="none" stroke="#8e939c"/><text x="520" y="164" fill="#b9ab95">tokens</text>
+    <rect x="508" y="184" width="158" height="30" fill="none" stroke="#8e939c"/><text x="520" y="204" fill="#b9ab95">sessions …</text>
+    <rect x="508" y="224" width="158" height="30" fill="none" stroke="#c98b86" stroke-dasharray="4 3"/><text x="520" y="244" fill="#c98b86">your own</text>
+    <!-- tray -->
+    <rect x="736" y="90" width="200" height="180" fill="#1d1815" stroke="#e9dcc6"/>
+    <text x="752" y="118" fill="#e9dcc6">tray</text>
+    <text x="752" y="150" fill="#b9ab95">draws the pictures</text>
+    <text x="752" y="172" fill="#b9ab95">never opens files</text>
+    <text x="752" y="194" fill="#b9ab95">or runs programs</text>
+    <text x="752" y="236" fill="#8e939c">KDE · X11 · Windows</text>
+  </g>
+  <g stroke="#c98b86" stroke-width="2" fill="none" marker-end="url(#ar)">
+    <path d="M214 180H266"/><path d="M438 180H490"/><path d="M682 180H734"/>
+  </g>
+  <!-- data travelling along the arrows -->
+  <g fill="#e8b9ab">
+    <circle r="4"><animateMotion dur="3s" repeatCount="indefinite" path="M214 150H266"/></circle>
+    <circle r="4"><animateMotion dur="3s" begin=".5s" repeatCount="indefinite" path="M214 210H266"/></circle>
+    <circle r="4" fill="#e3e5ea"><animateMotion dur="3s" begin="1s" repeatCount="indefinite" path="M438 180H490"/></circle>
+    <circle r="4" fill="#e9dcc6"><animateMotion dur="3s" begin="1.5s" repeatCount="indefinite" path="M682 180H734"/></circle>
+  </g>
+</svg>

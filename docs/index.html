@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Status Quo, a guided tour</title>
+<meta name="description" content="A step-by-step visual tour of Status Quo: install it, use the widgets, plug in your accounts and build your own widget.">
+<style>
+:root{
+  --bg:#15110f; --bg2:#1b1613; --panel:#1d1815; --line:#3a312b;
+  --beige:#e9dcc6; --beige-dim:#b9ab95; --silver:#c4c8cf; --silver-hi:#e3e5ea; --silver-dim:#8e939c;
+  --rose:#c98b86; --rose-hi:#e8b9ab; --rose-deep:#a8645f;
+  --mono:ui-monospace,"JetBrains Mono","SFMono-Regular",Menlo,Consolas,"Liberation Mono",monospace;
+}
+@media (prefers-color-scheme: light){
+  :root:not([data-theme="dark"]){--bg:#f3ece0;--bg2:#ece3d3;--panel:#f8f2e8;--line:#cdbfa8;--beige:#2b211b;--beige-dim:#5d4f43;--silver:#4b5058;--silver-hi:#23262b;--silver-dim:#6c717a;--rose:#a8645f;--rose-hi:#8a4b47;--rose-deep:#7a3f3b;}
+}
+:root[data-theme="light"]{--bg:#f3ece0;--bg2:#ece3d3;--panel:#f8f2e8;--line:#cdbfa8;--beige:#2b211b;--beige-dim:#5d4f43;--silver:#4b5058;--silver-hi:#23262b;--silver-dim:#6c717a;--rose:#a8645f;--rose-hi:#8a4b47;--rose-deep:#7a3f3b;}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:56px}
+body{margin:0;background:var(--bg);color:var(--beige);font:16px/1.65 var(--mono);-webkit-font-smoothing:antialiased}
+a{color:var(--rose-hi);text-decoration:none;border-bottom:1px solid var(--rose-deep)}
+a:hover{color:var(--silver-hi);border-color:var(--silver)}
+code,kbd{font-family:var(--mono)}
+kbd{display:inline-block;padding:0 .5em;border:1px solid var(--silver-dim);border-bottom-width:2px;color:var(--silver-hi);font-size:.85em}
+/* top bar, like a tiling-desktop status bar */
+.bar{position:fixed;inset:0 0 auto 0;height:44px;display:flex;align-items:center;gap:6px;padding:0 14px;background:var(--bg2);border-bottom:1px solid var(--line);z-index:10;font-size:14px}
+.bar .brand{color:var(--rose-hi);font-weight:700;margin-right:14px;letter-spacing:.08em}
+.bar a.ws{border:0;color:var(--silver-dim);padding:2px 9px;border:1px solid transparent}
+.bar a.ws.on{color:var(--bg);background:linear-gradient(135deg,var(--rose-hi),var(--rose));border-color:var(--rose-hi)}
+.bar .sp{flex:1}
+.bar button{font:inherit;color:var(--silver);background:none;border:1px solid var(--line);padding:2px 10px;cursor:pointer}
+.bar button:hover{border-color:var(--rose)}
+.progress{position:fixed;top:44px;left:0;height:2px;width:0;background:linear-gradient(90deg,var(--silver),var(--rose-hi),var(--silver));z-index:11}
+main{max-width:1100px;margin:0 auto;padding:84px 18px 120px}
+/* hero */
+.hero{border:1px solid var(--rose);padding:0;margin-bottom:44px;background:var(--panel);position:relative;overflow:hidden}
+.hero .title{display:flex;justify-content:space-between;padding:6px 14px;border-bottom:1px solid var(--line);background:var(--bg2);color:var(--beige-dim);font-size:13px}
+.hero img{display:block;width:100%;height:auto}
+.hero .lede{padding:20px 22px 26px}
+.hero h1{margin:0 0 6px;font-size:clamp(28px,5vw,44px);letter-spacing:.06em;color:var(--beige)}
+.hero h1 b{background:linear-gradient(135deg,var(--silver-hi),var(--rose-hi) 55%,var(--rose));-webkit-background-clip:text;background-clip:text;color:transparent}
+.lede p{margin:.4em 0;color:var(--beige-dim);max-width:62ch}
+/* a scene is a tiled window with a stage and narration */
+.scene{border:1px solid var(--line);background:var(--panel);margin:0 0 40px;position:relative;transition:border-color .5s}
+.scene.on{border-color:var(--rose)}
+.scene>header{display:flex;justify-content:space-between;align-items:center;padding:7px 14px;border-bottom:1px solid var(--line);background:var(--bg2);font-size:13px;color:var(--beige-dim)}
+.scene>header .n{color:var(--rose-hi)}
+.scene h2{margin:0;font-size:clamp(20px,3vw,28px);color:var(--silver-hi);padding:18px 22px 0}
+.scene .q{padding:2px 22px 10px;color:var(--rose-hi);font-style:italic}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:0}
+@media (max-width:820px){.grid{grid-template-columns:1fr}}
+.stage{padding:14px 22px 22px}
+.stage img{width:100%;height:auto;border:1px solid var(--line);display:block;background:var(--bg)}
+.say{padding:0 22px 22px}
+.say p,.say li{opacity:.28;transform:translateY(8px);transition:opacity .6s,transform .6s}
+.scene.on .say p,.scene.on .say li{opacity:1;transform:none}
+.scene.on .say :nth-child(2){transition-delay:.12s}.scene.on .say :nth-child(3){transition-delay:.24s}.scene.on .say :nth-child(4){transition-delay:.36s}.scene.on .say :nth-child(5){transition-delay:.48s}.scene.on .say :nth-child(6){transition-delay:.6s}
+.say ul,.say ol{padding-left:1.2em;margin:.4em 0}
+.idea{margin:14px 22px 22px;padding:12px 16px;border-left:3px solid var(--rose);background:linear-gradient(90deg,rgba(201,139,134,.12),transparent);color:var(--beige)}
+.idea b{color:var(--rose-hi)}
+pre{margin:12px 22px;padding:14px 16px 14px;background:var(--bg);border:1px solid var(--line);overflow:auto;position:relative;color:var(--beige);font-size:13.5px;line-height:1.55}
+pre .c{color:var(--silver-dim)}
+pre button{position:absolute;top:6px;right:6px;font:12px var(--mono);color:var(--silver);background:var(--panel);border:1px solid var(--line);cursor:pointer;padding:1px 8px}
+pre button:hover{border-color:var(--rose);color:var(--rose-hi)}
+table{border-collapse:collapse;margin:10px 22px 18px;width:calc(100% - 44px);font-size:14px}
+th,td{border:1px solid var(--line);padding:6px 10px;text-align:left;vertical-align:top}
+th{background:var(--bg2);color:var(--silver-hi)}
+td code,.say code{color:var(--rose-hi)}
+.doors{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;padding:6px 22px 20px}
+.door{border:1px solid var(--line);padding:12px 14px;background:var(--bg)}
+.door:hover{border-color:var(--silver)}
+.door h3{margin:0 0 4px;color:var(--silver-hi);font-size:15px}
+.door p{margin:0;color:var(--beige-dim);font-size:13.5px}
+.foot{color:var(--silver-dim);font-size:13px;border-top:1px solid var(--line);padding-top:18px}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}.say p,.say li{opacity:1;transform:none;transition:none}}
+</style>
+</head>
+<body>
+<nav class="bar" aria-label="Chapters">
+  <span class="brand">STATUS&nbsp;QUO</span>
+  <a class="ws" href="#s1">1</a><a class="ws" href="#s2">2</a><a class="ws" href="#s3">3</a><a class="ws" href="#s4">4</a><a class="ws" href="#s5">5</a><a class="ws" href="#s6">6</a><a class="ws" href="#s7">7</a><a class="ws" href="#s8">8</a>
+  <span class="sp"></span>
+  <button id="theme" type="button" aria-label="Switch between dark and light">dark / light</button>
+</nav>
+<div class="progress" id="progress"></div>
+<main>
+
+<section class="hero">
+  <div class="title"><span>status-quo ~/guided-tour</span><span>8 scenes · about ten minutes</span></div>
+  <img src="img/hero.svg" alt="A desktop tray assembling itself from separate widgets">
+  <div class="lede">
+    <h1><b>A guided tour</b></h1>
+    <p>What if the numbers you keep checking were simply there, on your desktop, without opening anything?</p>
+    <p>This tour builds the idea one picture at a time. Scroll slowly: each scene lights up when you reach it. The plain-text version is the <a href="../README.md">README</a>.</p>
+  </div>
+</section>
+
+<section class="scene" id="s1">
+  <header><span><span class="n">1</span> / 8 &nbsp;the big picture</span><span><kbd>read</kbd></span></header>
+  <h2>How does it work?</h2>
+  <div class="q">Where do the numbers come from, and who draws them?</div>
+  <div class="grid">
+    <div class="stage"><img src="img/pipeline.svg" alt="Files and accounts flow left to right through the collector and widgets to the tray"></div>
+    <div class="say">
+      <p>Watch the dots: they travel <b>left to right</b>, never back.</p>
+      <ol>
+        <li><b>Your computer</b> holds the facts: Claude and Codex folders, GitHub, notes, processor, memory, graphics.</li>
+        <li><b>The collector</b> reads them (it never writes), keeps the last good value and says if a source is fresh or broken.</li>
+        <li><b>Widgets</b> turn data into a description of a picture.</li>
+        <li><b>The tray</b> draws it. It cannot open files or run programs.</li>
+      </ol>
+    </div>
+  </div>
+  <div class="idea"><b>The one idea:</b> the collector reads, widgets describe, the tray draws. No analytics, nothing sent anywhere, no stored conversations.</div>
+</section>
+
+<section class="scene" id="s2">
+  <header><span><span class="n">2</span> / 8 &nbsp;install</span><span><kbd>build once</kbd></span></header>
+  <h2>Put it on your computer</h2>
+  <div class="q">Which door is yours?</div>
+  <div class="doors">
+    <div class="door"><h3>Linux · KDE, Hyprland, sway</h3><p>On the desktop layer, behind your windows.</p></div>
+    <div class="door"><h3>Linux · any X11 session</h3><p>A frameless window kept below the others.</p></div>
+    <div class="door"><h3>Linux · GNOME on Wayland</h3><p>An ordinary window.</p></div>
+    <div class="door"><h3>Windows 10 and 11</h3><p>An ordinary window, no administrator rights.</p></div>
+  </div>
+  <div class="say"><p>There are no ready-made installers yet. You build it once, then it installs itself for your user only.</p></div>
+<pre><button type="button">copy</button><span class="c"># Linux. Rust 1.87+ from rustup.rs, then the drawing libraries (Debian/Ubuntu):</span>
+sudo apt-get install -y pkg-config libx11-dev libxkbcommon-dev libwayland-dev libgl1-mesa-dev
+git clone https://github.com/yujideluca/status-quo.git &amp;&amp; cd status-quo
+cargo build --release --locked -p status-quo
+target/release/status-quo install</pre>
+<pre><button type="button">copy</button><span class="c"># Windows, PowerShell (Rust with the MSVC build tools):</span>
+git clone https://github.com/yujideluca/status-quo.git; cd status-quo
+cargo build --release --locked -p status-quo
+target\release\status-quo.exe install</pre>
+  <div class="say"><p><code>install</code> lists every file it owns, keeps your existing Claude and Codex hooks, and <code>status-quo uninstall</code> reverses it while keeping your layouts. Fedora and Arch library names, and the full details: <a href="guide/install.md">install guide</a>.</p></div>
+</section>
+
+<section class="scene" id="s3">
+  <header><span><span class="n">3</span> / 8 &nbsp;first minute</span><span><kbd>Edit tray</kbd></span></header>
+  <h2>Your first minute</h2>
+  <div class="q">How do I move things around?</div>
+  <table>
+    <tr><th>Button</th><th>What it does</th></tr>
+    <tr><td><code>+ Add widget</code></td><td>A menu of every widget for every account you have.</td></tr>
+    <tr><td><code>Edit tray</code></td><td>Drag a widget to move it, drag an edge or corner to resize, press <b>Remove</b> in its centre. Borders snap to neighbours; pink and blue lines show what lines up. <b>Done</b> saves, <b>Cancel</b> discards.</td></tr>
+    <tr><td><code>Customize</code></td><td>Colours, size, opacity, spacing, position, folders and each widget's settings.</td></tr>
+  </table>
+  <div class="idea"><b>Safe to explore:</b> nothing is final until <b>Save changes</b> or <b>Done</b>, and <b>Cancel</b> brings back what you had.</div>
+</section>
+
+<section class="scene" id="s4">
+  <header><span><span class="n">4</span> / 8 &nbsp;widgets</span><span><kbd>8 built in</kbd></span></header>
+  <h2>Pick the right widget</h2>
+  <div class="q">Which widget shows which number?</div>
+  <table>
+    <tr><th>Widget</th><th>Shows</th><th>Options</th></tr>
+    <tr><td><code>quota</code></td><td>five-hour and weekly limit used, and resets</td><td>none</td></tr>
+    <tr><td><code>tokens</code></td><td>token graph: input, output, cache</td><td><code>range</code> 24h/7d/30d · <code>bucket</code> hourly/daily · <code>cumulative</code></td></tr>
+    <tr><td><code>sessions</code></td><td>sessions by project, subagents, done/total</td><td><code>history=true</code></td></tr>
+    <tr><td><code>activity</code></td><td>GitHub commits, pull requests, issues, releases, checks</td><td><code>repository</code></td></tr>
+    <tr><td><code>memory</code></td><td>recent workflow-memory entries</td><td><code>type</code></td></tr>
+    <tr><td><code>system</code> <code>ram</code> <code>gpu</code></td><td>CPU and temperature, memory, every graphics card</td><td>none</td></tr>
+  </table>
+  <div class="idea"><b>Unknown is not zero.</b> A value that cannot be read says <b>unavailable</b>, because zero would be a claim. Details: <a href="guide/widgets.md">widget guide</a>.</div>
+</section>
+
+<section class="scene" id="s5">
+  <header><span><span class="n">5</span> / 8 &nbsp;accounts</span><span><kbd>claude:work</kbd></span></header>
+  <h2>Plug in your accounts</h2>
+  <div class="q">Can I see my work account next to my personal one?</div>
+  <div class="grid">
+    <div class="stage"><img src="img/accounts.svg" alt="Account folders feed account keys; widgets choose one key"></div>
+    <div class="say">
+      <p>An <b>account key</b> names one sign-in: <code>claude</code>, <code>codex</code>, <code>github</code>, or <code>claude:work</code> for an extra one.</p>
+      <ol>
+        <li>Defaults need nothing: sign in with the tool itself.</li>
+        <li><b>Customize → More accounts → + Add account</b>, choose kind and name, <b>Browse…</b> to its folder.</li>
+        <li>Pick the key in <b>+ Add widget</b> or in the widget's provider drop-down.</li>
+      </ol>
+    </div>
+  </div>
+  <div class="idea"><b>No mixing:</b> a widget pointed at an account that does not exist says <b>unknown</b>; it never borrows another account's numbers. <a href="guide/accounts.md">Accounts guide</a>.</div>
+</section>
+
+<section class="scene" id="s6">
+  <header><span><span class="n">6</span> / 8 &nbsp;make it yours</span><span><kbd>wallpaper</kbd></span></header>
+  <h2>Make it yours</h2>
+  <div class="q">Can it match my wallpaper?</div>
+  <div class="grid">
+    <div class="stage"><img src="img/wallpaper.svg" alt="A wallpaper becomes one hue and then a readable palette"></div>
+    <div class="say">
+      <p>Tick <b>Follow the wallpaper colours</b>.</p>
+      <ul>
+        <li>The picture shrinks to one dominant hue.</li>
+        <li>A palette is built from it, kept readable (text 7:1, others 4.5:1).</li>
+        <li>A grey wallpaper stays neutral: no hue is invented.</li>
+        <li>If the picture cannot be found, your palette stays and the reason is shown.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="say"><p>Also: light/dark/system, opacity, font size, per-widget looks, <code>STATUS_QUO_HOST</code> and <code>STATUS_QUO_ANCHOR</code>, a <b>Browse…</b> folder navigator for every source path, presets and validated import. <a href="guide/make-it-yours.md">Customization guide</a>.</p></div>
+</section>
+
+<section class="scene" id="s7">
+  <header><span><span class="n">7</span> / 8 &nbsp;your own widget</span><span><kbd>Rust</kbd></span></header>
+  <h2>Build your own widget</h2>
+  <div class="q">What if the number I want is not built in?</div>
+  <div class="say"><p>A widget is a small Rust type with two methods: <b>who am I</b> and <b>what do I show right now</b>. It describes; the tray draws.</p></div>
+<pre><button type="button">copy</button>struct Note;
+impl Widget for Note {
+    fn descriptor(&amp;self) -&gt; Descriptor {
+        Descriptor { kind: "note".into(), title: "Note".into(), providers: vec!["local".into()] }
+    }
+    fn view(&amp;self, instance: &amp;WidgetInstance, _snapshot: &amp;Snapshot, _now: i64) -&gt; View {
+        let text = instance.options.get("text").cloned()
+            .unwrap_or_else(|| "Set the text option of this widget".into());
+        View { title: "Note".into(), nodes: vec![Node::Text(text)] }
+    }
+}
+<span class="c">// once, where the tray is created:</span>
+tray.registry.register(Box::new(Note)).expect("unique widget kind");</pre>
+  <div class="idea"><b>It shows up</b> in <b>+ Add widget</b> next to the built-in ones, with its own size, colours and options. The <a href="guide/build-a-widget.md">widget-building guide</a> adds meters, charts, links and tests; its code is compiled by the project's own tests. Widgets are compiled in; there is no run-time plugin loading yet.</div>
+</section>
+
+<section class="scene" id="s8">
+  <header><span><span class="n">8</span> / 8 &nbsp;troubleshooting</span><span><kbd>inspect</kbd></span></header>
+  <h2>When something looks off</h2>
+  <div class="q">Where do I look first?</div>
+  <table>
+    <tr><th>You see</th><th>Try</th></tr>
+    <tr><td><b>unavailable</b></td><td>The source has no value yet or cannot be read; the widget's notice names the reason.</td></tr>
+    <tr><td>Nothing after install</td><td><code>status-quo inspect</code>. JSON means the collector works; an error: run <code>status-quo collect</code> in a terminal.</td></tr>
+    <tr><td>A normal window, not on the desktop</td><td>Your desktop offers no desktop-layer protocol (expected on GNOME/Wayland and Windows). See <a href="guide/install.md#how-it-sits-on-your-desktop">hosts</a>.</td></tr>
+    <tr><td>Wallpaper colours do nothing</td><td>Customize prints the reason next to the checkbox.</td></tr>
+    <tr><td>No progress count on a session</td><td>That session keeps no task list; counts are never guessed.</td></tr>
+  </table>
+</section>
+
+<p class="foot">Status Quo is under active development. A passing build alone does not prove behaviour on your desktop; the guides say what was verified. Contributors: <a href="DEVELOPMENT.md">development notes</a>, <a href="../DESIGN.md">design decisions</a>, <a href="REQUIREMENTS.md">requirements</a>.</p>
+</main>
+<script>
+(function(){
+  var scenes=[].slice.call(document.querySelectorAll('.scene'));
+  var links=[].slice.call(document.querySelectorAll('.ws'));
+  if('IntersectionObserver' in window){
+    var io=new IntersectionObserver(function(es){es.forEach(function(e){
+      if(e.isIntersecting){e.target.classList.add('on');
+        links.forEach(function(a){a.classList.toggle('on',a.getAttribute('href')==='#'+e.target.id)});}
+    })},{rootMargin:'-35% 0px -35% 0px'});
+    scenes.forEach(function(s){io.observe(s)});
+  }else{scenes.forEach(function(s){s.classList.add('on')})}
+  var bar=document.getElementById('progress');
+  addEventListener('scroll',function(){
+    var h=document.documentElement;var p=h.scrollTop/(h.scrollHeight-h.clientHeight||1);
+    bar.style.width=(p*100)+'%';
+  },{passive:true});
+  [].forEach.call(document.querySelectorAll('pre button'),function(b){
+    b.addEventListener('click',function(){
+      var t=b.parentNode.innerText.replace(/^copy\n?/,'');
+      try{navigator.clipboard.writeText(t);b.textContent='copied'}catch(e){b.textContent='select + copy'}
+      setTimeout(function(){b.textContent='copy'},1500);
+    });
+  });
+  var root=document.documentElement;
+  try{var saved=localStorage.getItem('sq-theme');if(saved)root.setAttribute('data-theme',saved)}catch(e){}
+  document.getElementById('theme').addEventListener('click',function(){
+    var cur=root.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');
+    var next=cur==='light'?'dark':'light';root.setAttribute('data-theme',next);
+    try{localStorage.setItem('sq-theme',next)}catch(e){}
+  });
+})();
+</script>
+</body>
+</html>

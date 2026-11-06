@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 330" role="img" aria-labelledby="t d">
+  <title id="t">Status Quo</title>
+  <desc id="d">A desktop tray assembling itself from separate widgets: usage, tokens, sessions and system graphs.</desc>
+  <defs>
+    <linearGradient id="rg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#e8b9ab"/><stop offset=".5" stop-color="#b76e79"/><stop offset="1" stop-color="#e8b9ab"/>
+    </linearGradient>
+    <linearGradient id="sv" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#8e939c"/><stop offset=".5" stop-color="#e3e5ea"/><stop offset="1" stop-color="#8e939c"/>
+    </linearGradient>
+  </defs>
+  <rect width="960" height="330" fill="#15110f"/>
+  <rect x="14" y="14" width="932" height="302" fill="none" stroke="url(#rg)" stroke-width="2">
+    <animate attributeName="stroke-opacity" values="1;.55;1" dur="6s" repeatCount="indefinite"/>
+  </rect>
+  <rect x="14" y="14" width="932" height="30" fill="#1d1815"/>
+  <text x="30" y="34" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13" fill="#b9ab95">status-quo  ~/tutorial</text>
+  <g font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13" fill="#8e939c">
+    <text x="830" y="34">1  2  3  4  5</text>
+  </g>
+  <text x="44" y="108" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="46" font-weight="700" fill="#e9dcc6">STATUS QUO</text>
+  <text x="44" y="142" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="14" fill="#c98b86">the numbers you keep checking, on your desktop</text>
+  <rect x="44" y="160" width="260" height="2" fill="url(#sv)"/>
+  <text x="44" y="204" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="12" fill="#8e939c">one widget per idea</text><text x="44" y="224" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="12" fill="#8e939c">read-only · any desktop</text><text x="44" y="244" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="12" fill="#8e939c">your colours</text>
+
+  <!-- the tiles assemble one after the other, then the loop restarts -->
+  <g font-family="ui-monospace,Menlo,Consolas,monospace" font-size="12">
+    <g>
+      <animateTransform attributeName="transform" type="translate" values="0 18;0 0;0 0;0 18" keyTimes="0;.12;.9;1" dur="9s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;.12;.9;1" dur="9s" repeatCount="indefinite"/>
+      <rect x="470" y="64" width="210" height="118" fill="#1d1815" stroke="#c98b86"/>
+      <text x="484" y="86" fill="#e8b9ab">claude / usage</text>
+      <rect x="484" y="100" width="182" height="8" fill="#2a231e"/><rect x="484" y="100" width="140" height="8" fill="#c98b86"/>
+      <rect x="484" y="126" width="182" height="8" fill="#2a231e"/><rect x="484" y="126" width="64" height="8" fill="#c4c8cf"/>
+      <text x="484" y="160" fill="#8e939c">resets 21:39</text>
+    </g>
+    <g>
+      <animateTransform attributeName="transform" type="translate" values="0 18;0 18;0 0;0 0;0 18" keyTimes="0;.12;.24;.9;1" dur="9s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;.12;.24;.9;1" dur="9s" repeatCount="indefinite"/>
+      <rect x="696" y="64" width="210" height="118" fill="#1d1815" stroke="#c4c8cf"/>
+      <text x="710" y="86" fill="#e3e5ea">tokens / 24h</text>
+      <polyline points="710,160 740,146 770,152 800,120 830,138 860,106 890,128" fill="none" stroke="#e8b9ab" stroke-width="2"/>
+    </g>
+    <g>
+      <animateTransform attributeName="transform" type="translate" values="0 18;0 18;0 0;0 0;0 18" keyTimes="0;.26;.38;.9;1" dur="9s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;.26;.38;.9;1" dur="9s" repeatCount="indefinite"/>
+      <rect x="470" y="196" width="436" height="96" fill="#1d1815" stroke="#e9dcc6"/>
+      <text x="484" y="218" fill="#e9dcc6">sessions</text>
+      <text x="484" y="242" fill="#b9ab95">▸ status-quo       running   3/3</text>
+      <text x="484" y="262" fill="#b9ab95">▸ wiki             waiting</text>
+      <text x="484" y="282" fill="#b9ab95">▸ radiology        completed</text>
+    </g>
+  </g>
+</svg>

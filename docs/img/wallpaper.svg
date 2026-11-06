@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 220" role="img" aria-labelledby="t d">
+  <title id="t">Colours from the wallpaper</title>
+  <desc id="d">A wallpaper is shrunk to one dominant hue; from that hue a readable palette is built.</desc>
+  <defs>
+    <linearGradient id="wp" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1b1a3a"/><stop offset=".6" stop-color="#5b57a8"/><stop offset="1" stop-color="#c7b8e6"/></linearGradient>
+  </defs>
+  <rect width="960" height="220" fill="#15110f"/>
+  <rect x="30" y="40" width="240" height="140" fill="url(#wp)" stroke="#3a312b"/>
+  <g font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13" fill="#b9ab95">
+    <text x="30" y="30">1  your wallpaper</text>
+    <text x="330" y="30">2  one hue</text>
+    <text x="560" y="30">3  a readable palette</text>
+  </g>
+  <circle cx="370" cy="110" r="34" fill="#6f6bb8"><animate attributeName="r" values="30;38;30" dur="3s" repeatCount="indefinite"/></circle>
+  <path d="M280 110H322" stroke="#c98b86" stroke-width="2"/><path d="M416 110H550" stroke="#c98b86" stroke-width="2"/>
+  <g>
+    <rect x="560" y="70" width="60" height="80" fill="#14131b"><animate attributeName="opacity" values="0;1;1" keyTimes="0;.1;1" dur="5s" repeatCount="indefinite"/></rect>
+    <rect x="628" y="70" width="60" height="80" fill="#e3e3e8"><animate attributeName="opacity" values="0;0;1;1" keyTimes="0;.2;.3;1" dur="5s" repeatCount="indefinite"/></rect>
+    <rect x="696" y="70" width="60" height="80" fill="#8782d9"><animate attributeName="opacity" values="0;0;1;1" keyTimes="0;.4;.5;1" dur="5s" repeatCount="indefinite"/></rect>
+    <rect x="764" y="70" width="60" height="80" fill="#a09fac"><animate attributeName="opacity" values="0;0;1;1" keyTimes="0;.6;.7;1" dur="5s" repeatCount="indefinite"/></rect>
+    <rect x="832" y="70" width="60" height="80" fill="#e5c16c"><animate attributeName="opacity" values="0;0;1;1" keyTimes="0;.8;.9;1" dur="5s" repeatCount="indefinite"/></rect>
+  </g>
+  <g font-family="ui-monospace,Menlo,Consolas,monospace" font-size="11" fill="#8e939c">
+    <text x="560" y="172">background</text><text x="632" y="172">text</text><text x="700" y="172">accent</text><text x="768" y="172">muted</text><text x="836" y="172">warning</text>
+  </g>
+</svg>

@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 300" role="img" aria-labelledby="t d">
+  <title id="t">Plugging accounts into widgets</title>
+  <desc id="d">Each account folder feeds its own key, such as claude or claude:work, and each widget chooses one key.</desc>
+  <rect width="960" height="300" fill="#15110f"/>
+  <g font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13">
+    <rect x="30" y="40" width="210" height="52" fill="#1d1815" stroke="#3a312b"/><text x="46" y="72" fill="#e9dcc6">~/.claude</text>
+    <rect x="30" y="124" width="210" height="52" fill="#1d1815" stroke="#3a312b"/><text x="46" y="156" fill="#e9dcc6">~/.claude-work</text>
+    <rect x="30" y="208" width="210" height="52" fill="#1d1815" stroke="#3a312b"/><text x="46" y="240" fill="#e9dcc6">gh config: work</text>
+    <rect x="330" y="40" width="150" height="52" fill="#1d1815" stroke="#c98b86"/><text x="346" y="72" fill="#e8b9ab">claude</text>
+    <rect x="330" y="124" width="150" height="52" fill="#1d1815" stroke="#c98b86"/><text x="346" y="156" fill="#e8b9ab">claude:work</text>
+    <rect x="330" y="208" width="150" height="52" fill="#1d1815" stroke="#c98b86"/><text x="346" y="240" fill="#e8b9ab">github:work</text>
+    <text x="330" y="28" fill="#8e939c">account key</text>
+    <rect x="610" y="40" width="320" height="52" fill="#1d1815" stroke="#c4c8cf"/><text x="626" y="62" fill="#e3e5ea">widget: usage</text><text x="626" y="82" fill="#8e939c">provider = claude</text>
+    <rect x="610" y="124" width="320" height="52" fill="#1d1815" stroke="#c4c8cf"/><text x="626" y="146" fill="#e3e5ea">widget: usage</text><text x="626" y="166" fill="#8e939c">provider = claude:work</text>
+    <rect x="610" y="208" width="320" height="52" fill="#1d1815" stroke="#c4c8cf"/><text x="626" y="230" fill="#e3e5ea">widget: activity</text><text x="626" y="250" fill="#8e939c">provider = github:work</text>
+  </g>
+  <g stroke="#c98b86" stroke-width="2" fill="none" stroke-dasharray="6 6">
+    <path d="M240 66H330"><animate attributeName="stroke-dashoffset" from="24" to="0" dur="1.6s" repeatCount="indefinite"/></path>
+    <path d="M240 150H330"><animate attributeName="stroke-dashoffset" from="24" to="0" dur="1.6s" repeatCount="indefinite"/></path>
+    <path d="M240 234H330"><animate attributeName="stroke-dashoffset" from="24" to="0" dur="1.6s" repeatCount="indefinite"/></path>
+    <path d="M480 66H610"><animate attributeName="stroke-dashoffset" from="24" to="0" dur="1.6s" repeatCount="indefinite"/></path>
+    <path d="M480 150H610"><animate attributeName="stroke-dashoffset" from="24" to="0" dur="1.6s" repeatCount="indefinite"/></path>
+    <path d="M480 234H610"><animate attributeName="stroke-dashoffset" from="24" to="0" dur="1.6s" repeatCount="indefinite"/></path>
+  </g>
+</svg>

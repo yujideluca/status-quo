@@ -1,0 +1,102 @@
+# Install Status Quo
+
+Back to the [tour](../../README.md). There are no ready-made installers yet: you build the program once from source and then let it install itself **for your user only**. No `sudo` is needed after the libraries are in place.
+
+## What you need
+
+| Need | Why |
+|---|---|
+| Rust 1.87 or newer ([rustup.rs](https://rustup.rs)) | the whole program is Rust |
+| Drawing libraries (Linux only, below) | X11, Wayland, keyboard maps and OpenGL |
+| `claude` and/or `codex` signed in | the usage, token and session widgets read what these tools saved |
+| `gh` signed in (`gh auth login`) | the GitHub activity widget reads through it |
+
+Status Quo never creates or refreshes a login. Without a sign-in, the matching widget shows *unavailable*; everything else keeps working.
+
+## Linux
+
+**1. Libraries.** The project's own continuous-integration job installs these on Ubuntu, so the Debian/Ubuntu line is the tested one:
+
+```sh
+# Debian, Ubuntu and relatives (tested in CI)
+sudo apt-get install -y pkg-config libx11-dev libxkbcommon-dev libwayland-dev libgl1-mesa-dev
+```
+
+Other families need the same four libraries under their own names. These are the usual ones and have **not** been tested here:
+
+```sh
+# Fedora and relatives
+sudo dnf install pkgconf-pkg-config libX11-devel libxkbcommon-devel wayland-devel mesa-libGL-devel
+# Arch and relatives
+sudo pacman -S pkgconf libx11 libxkbcommon wayland mesa
+```
+
+**2. Build and install.**
+
+```sh
+git clone https://github.com/yujideluca/status-quo.git
+cd status-quo
+cargo build --release --locked -p status-quo
+target/release/status-quo install
+```
+
+**3. Start it.** Log out and in (it starts at login unless you turn that off in Customize), or run `status-quo` now. The first start also starts the collector.
+
+### How it sits on your desktop
+
+Status Quo asks the session what it can do and picks the best of three hosts. It tells you which one and why (Customize shows the line).
+
+| Your session | Host chosen | Result |
+|---|---|---|
+| The compositor offers the *layer-shell* protocol (KDE Plasma, Hyprland, sway) | layer-shell | frameless, on the desktop layer, below windows by default, anchored to a corner |
+| An X11 session | X11 hints | a frameless window kept below others, off the taskbar |
+| Anything else, for example GNOME on Wayland | window | an ordinary window |
+
+Verified here: KDE Plasma on Wayland. The X11 and window hosts and the other layer-shell compositors follow the design and the protocol but were not run on real machines for this guide. Two variables override the choice when it can work:
+
+```sh
+STATUS_QUO_HOST=window status-quo        # layer-shell, x11 or window
+STATUS_QUO_ANCHOR=bottom-left status-quo # top, bottom, left, right, or a pair such as top-right (default)
+```
+
+## Windows
+
+Windows 10 and 11 are supported; the test suite passes on both (Windows 10 LTSC 2021 and Windows 11 24H2 test machines), and the window was seen opening on Windows 11 with a software OpenGL driver.
+
+1. Install Rust with the **Microsoft C++ build tools** (the default rustup choice).
+2. In PowerShell:
+
+```powershell
+git clone https://github.com/yujideluca/status-quo.git
+cd status-quo
+cargo build --release --locked -p status-quo
+target\release\status-quo.exe install
+```
+
+What is different on Windows: the tray is an ordinary window (use the *Window layer* setting to keep it behind or above others); the collector and panel talk through a private port on your own machine protected by a random token; CPU and memory come from Windows, every graphics card of any maker from the Windows performance counters (the ones Task Manager uses); the CPU temperature is **unavailable** because Windows offers none without a driver. No administrator rights are used.
+
+## What `install` does
+
+Everything it touches is listed in a manifest and removed again by `status-quo uninstall`. Saved layouts and history stay.
+
+| Linux | Windows |
+|---|---|
+| `~/.local/bin/status-quo` | `%LOCALAPPDATA%\status-quo\bin\status-quo.exe` |
+| `~/.config/systemd/user/status-quo-collector.service` and `…-panel.service` | a hidden launcher `status-quo.vbs` in your Startup folder |
+| `~/.local/share/applications/status-quo.desktop`, `~/.config/autostart/status-quo.desktop` | |
+| small hooks in `~/.claude/settings.json` and `~/.codex/hooks.json` | the same two files in your user folder |
+
+The hooks only report that a session started, waited or stopped, so the sessions widget can show live states. Your existing hooks are kept, and a file that was changed by someone else is never overwritten (the install stops and says so). State lives in `~/.local/state/status-quo` (Linux) or `%LOCALAPPDATA%\status-quo` (Windows); set `STATUS_QUO_STATE_DIR` to use another folder, for example to try things without touching your real setup.
+
+## Updating
+
+Pull, rebuild and run `install` again: it replaces only files it owns. Then restart: `systemctl --user restart status-quo-collector status-quo-panel` on Linux, or sign out and in on Windows.
+
+## Try it without installing
+
+```sh
+cargo run --locked -p status-quo                       # the real panel, nothing installed
+cargo run --locked -p status-quo -- inspect --widgets  # the widgets as JSON, no window
+```
+
+A browser version with invented data is described in the [browser demo](../browser-demo.md).
