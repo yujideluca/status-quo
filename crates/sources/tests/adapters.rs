@@ -276,9 +276,7 @@ fn repeated_discovery_matches_a_fresh_walk() {
     // Folders untouched for a minute: their listings may be remembered.
     let settle = |path: &std::path::Path| {
         for entry in walkdir_like(path) {
-            let file = fs::File::open(&entry).unwrap();
-            file.set_modified(SystemTime::now() - Duration::from_secs(60))
-                .unwrap();
+            set_modified(&entry, SystemTime::now() - Duration::from_secs(60));
         }
     };
     fn walkdir_like(path: &std::path::Path) -> Vec<std::path::PathBuf> {
@@ -333,12 +331,7 @@ fn repeated_discovery_matches_a_fresh_walk() {
     assert_eq!(state.discover(&config, now), Ok(1));
     same(&state, &fresh().1);
     // A transcript turning old no longer marks its folder as watched; a removed folder is dropped.
-    fs::File::options()
-        .write(true)
-        .open(projects.join("-home-me-old/gone.jsonl"))
-        .unwrap()
-        .set_modified(old)
-        .unwrap();
+    set_modified(&projects.join("-home-me-old/gone.jsonl"), old);
     settle(&projects);
     let mut again = LocalState::default();
     again.discover(&config, now).unwrap();
@@ -350,4 +343,26 @@ fn repeated_discovery_matches_a_fresh_walk() {
     assert!(!again.watch_dirs.contains(&projects.join("-home-me-deep")));
     assert_eq!(again.watch_dirs, fresh().1.watch_dirs);
     let _ = fs::remove_dir_all(&root);
+}
+
+/// Sets the modification time of a file or a folder on every supported system. Windows opens a
+/// folder only with FILE_FLAG_BACKUP_SEMANTICS and changes its time only with
+/// FILE_WRITE_ATTRIBUTES; a plain `File::open` there fails with "Access is denied" (SQ-36).
+fn set_modified(path: &std::path::Path, time: std::time::SystemTime) {
+    let mut options = std::fs::OpenOptions::new();
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_WRITE_ATTRIBUTES: u32 = 0x0100;
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        options
+            .access_mode(FILE_WRITE_ATTRIBUTES)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS);
+    }
+    #[cfg(not(windows))]
+    options.read(true);
+    options
+        .open(path)
+        .and_then(|file| file.set_modified(time))
+        .unwrap_or_else(|e| panic!("set modified time of {}: {e}", path.display()));
 }
