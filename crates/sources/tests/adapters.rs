@@ -239,3 +239,115 @@ fn discovery_ignores_empty_project_folders_and_watches_only_live_ones() {
     assert!(state.discover_bounded(&config, now, 10, 5_000).is_err());
     let _ = std::fs::remove_dir_all(&root);
 }
+// REQ SQ-31: discovery reuses the listing of a folder that has not changed since it was read, and
+// finds exactly what a fresh walk finds: a transcript added to a remembered folder, a removed
+// folder, a newly too-old transcript and nesting below the depth limit.
+#[test]
+fn repeated_discovery_matches_a_fresh_walk() {
+    use std::fs;
+    use std::time::{Duration, SystemTime};
+    let root = std::env::temp_dir().join(format!("sq-rediscover-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let projects = root.join(".claude/projects");
+    let dirs = [
+        "-tmp-a/memory",
+        "-home-me-app/sess/subagents",
+        "-home-me-old",
+        "-home-me-deep/a/b/c/d",
+    ];
+    for dir in dirs {
+        fs::create_dir_all(projects.join(dir)).unwrap();
+    }
+    for file in [
+        "-home-me-app/s1.jsonl",
+        "-home-me-app/sess/subagents/agent-1.jsonl",
+        "-home-me-old/gone.jsonl",
+        "-home-me-deep/a/b/c/four.jsonl",
+        "-home-me-deep/a/b/c/d/too-deep.jsonl",
+        "-tmp-a/memory/note.md",
+    ] {
+        fs::write(projects.join(file), "").unwrap();
+    }
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let old = SystemTime::now() - Duration::from_secs(40 * 86400);
+    // Folders untouched for a minute: their listings may be remembered.
+    let settle = |path: &std::path::Path| {
+        for entry in walkdir_like(path) {
+            let file = fs::File::open(&entry).unwrap();
+            file.set_modified(SystemTime::now() - Duration::from_secs(60))
+                .unwrap();
+        }
+    };
+    fn walkdir_like(path: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut out = vec![path.to_path_buf()];
+        for entry in fs::read_dir(path).unwrap().flatten() {
+            if entry.file_type().unwrap().is_dir() {
+                out.extend(walkdir_like(&entry.path()));
+            }
+        }
+        out
+    }
+    let config = sq_core::SourceConfig {
+        claude: root.join(".claude").to_string_lossy().into(),
+        codex: root.join(".codex").to_string_lossy().into(),
+        ..Default::default()
+    };
+    let fresh = || {
+        let mut state = LocalState::default();
+        let found = state.discover(&config, now);
+        (found, state)
+    };
+    let same = |a: &LocalState, b: &LocalState| {
+        assert_eq!(
+            a.cursors.keys().collect::<Vec<_>>(),
+            b.cursors.keys().collect::<Vec<_>>()
+        );
+        assert_eq!(a.watch_dirs, b.watch_dirs);
+        for (key, cursor) in &a.cursors {
+            assert_eq!(cursor.parser.parent, b.cursors[key].parser.parent);
+        }
+    };
+    settle(&projects);
+    let mut state = LocalState::default();
+    assert_eq!(state.discover(&config, now), Ok(4));
+    let (_, first) = fresh();
+    same(&state, &first);
+    assert_eq!(
+        first.cursors[&projects
+            .join("-home-me-app/sess/subagents/agent-1.jsonl")
+            .to_string_lossy()
+            .to_string()]
+            .parser
+            .parent
+            .as_deref(),
+        Some("sess")
+    );
+    // Unchanged tree: the remembered listings give the same result.
+    assert_eq!(state.discover(&config, now), Ok(0));
+    same(&state, &first);
+    // A transcript added to a remembered folder is found.
+    fs::write(projects.join("-tmp-a/memory/late.jsonl"), "").unwrap();
+    assert_eq!(state.discover(&config, now), Ok(1));
+    same(&state, &fresh().1);
+    // A transcript turning old no longer marks its folder as watched; a removed folder is dropped.
+    fs::File::options()
+        .write(true)
+        .open(projects.join("-home-me-old/gone.jsonl"))
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+    settle(&projects);
+    let mut again = LocalState::default();
+    again.discover(&config, now).unwrap();
+    again.discover(&config, now).unwrap();
+    assert!(!again.watch_dirs.contains(&projects.join("-home-me-old")));
+    same(&again, &fresh().1);
+    fs::remove_dir_all(projects.join("-home-me-deep")).unwrap();
+    again.discover(&config, now).unwrap();
+    assert!(!again.watch_dirs.contains(&projects.join("-home-me-deep")));
+    assert_eq!(again.watch_dirs, fresh().1.watch_dirs);
+    let _ = fs::remove_dir_all(&root);
+}
