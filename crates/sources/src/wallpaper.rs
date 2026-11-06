@@ -177,7 +177,11 @@ fn windows_wallpaper(probe: &Probe) -> Option<PathBuf> {
     .and_then(|p| resolve_image(&p));
     registry.or_else(|| {
         let appdata = (probe.var)("APPDATA")?;
-        resolve_image(&Path::new(&appdata).join(r"Microsoft\Windows\Themes\TranscodedWallpaper"))
+        resolve_image(
+            &["Microsoft", "Windows", "Themes", "TranscodedWallpaper"]
+                .iter()
+                .fold(PathBuf::from(&appdata), |path, part| path.join(part)),
+        )
     })
 }
 

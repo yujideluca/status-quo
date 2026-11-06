@@ -10,7 +10,9 @@ fn root() -> &'static Path {
         .unwrap()
 }
 fn read(relative: &str) -> String {
-    fs::read_to_string(root().join(relative)).unwrap_or_else(|e| panic!("{relative}: {e}"))
+    fs::read_to_string(root().join(relative))
+        .unwrap_or_else(|e| panic!("{relative}: {e}"))
+        .replace("\r\n", "\n")
 }
 const PAGES: &[&str] = &[
     "README.md",

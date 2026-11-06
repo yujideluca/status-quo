@@ -204,8 +204,9 @@ fn windows_reads_the_registry_then_the_transcoded_file_and_an_override_wins_ever
     let root = temp("win");
     let picture = root.join("pic.png");
     png(&picture, [200, 10, 10], (2, 2));
-    // On Linux a backslash is a file-name character; the fixture only needs the same name.
-    let transcoded_file = root.join(r"Microsoft\Windows\Themes\TranscodedWallpaper");
+    let themes = root.join("Microsoft").join("Windows").join("Themes");
+    fs::create_dir_all(&themes).unwrap();
+    let transcoded_file = themes.join("TranscodedWallpaper");
     png(&transcoded_file, [10, 10, 10], (2, 2));
     let mut fake = Fake::new();
     fake.vars.insert("APPDATA", root.display().to_string());
