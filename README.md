@@ -9,7 +9,7 @@ This page teaches Status Quo the way a good lecture would: one idea at a time, a
 | | Chapter | You will be able to |
 |---|---|---|
 | 1 | [The big picture](#1-the-big-picture) | explain how Status Quo works in one sentence |
-| 2 | [Put it on your computer](#2-put-it-on-your-computer) | install it on Linux or Windows |
+| 2 | [Put it on your computer](#2-put-it-on-your-computer) | install it on Linux or Windows, in one command |
 | 3 | [Your first minute](#3-your-first-minute) | move, resize and style widgets |
 | 4 | [The widgets](#4-the-widgets) | pick the right widget for each number |
 | 5 | [Plug in your accounts](#5-plug-in-your-accounts) | show more than one Claude, Codex or GitHub account |
@@ -36,17 +36,31 @@ Nothing is sent anywhere. There are no analytics, no generated summaries and no 
 
 ## 2. Put it on your computer
 
-There are no ready-made installers yet, so you build it once from source (a few minutes). Pick your door:
+**The fast way: one command.** It checks your computer, installs what is missing, builds or unpacks the program, installs it for your user only, starts it and prints a compatibility report.
+
+```sh
+# Linux (Debian/Ubuntu, Fedora, Arch and openSUSE families; sudo is asked only for packages)
+git clone https://github.com/yujideluca/status-quo.git && cd status-quo
+bash tools/install.sh
+```
+
+```text
+Windows: double-click  status-quo-setup.exe   (one file, no administrator rights)
+```
+
+`status-quo-setup.exe` is attached to each tagged release; until the first release is published, every CI run uploads it as the artifact `status-quo-setup-windows` (Actions tab). Add `--dry-run` to either installer to see every step without doing it, `--check-only` (Linux) or `--check` (Windows) to only look, and `--uninstall` to remove it. The compatibility report is also a command you can run any time: `status-quo doctor`.
+
+**The manual way**, if you prefer to see each step (it is what the installer does for you):
 
 | You use | Door | Where the widgets live |
 |---|---|---|
-| Linux, KDE Plasma, Hyprland or sway | [Linux guide](docs/guide/install.md#linux) | on the desktop layer, behind your windows |
-| Linux, an X11 session (any desktop) | [Linux guide](docs/guide/install.md#linux) | a frameless window kept below others |
-| Linux, GNOME on Wayland | [Linux guide](docs/guide/install.md#linux) | an ordinary window |
-| Windows 10 or 11 | [Windows guide](docs/guide/install.md#windows) | an ordinary window |
+| Linux, KDE Plasma, Hyprland or sway | [Linux guide](docs/guide/install.md#linux-step-by-step) | on the desktop layer, behind your windows |
+| Linux, an X11 session (any desktop) | [Linux guide](docs/guide/install.md#linux-step-by-step) | a frameless window kept below others |
+| Linux, GNOME on Wayland | [Linux guide](docs/guide/install.md#linux-step-by-step) | an ordinary window |
+| Windows 10 or 11 | [Windows guide](docs/guide/install.md#windows-step-by-step) | an ordinary window |
 | Just curious | [Browser demo](docs/browser-demo.md) | a web page with invented data |
 
-The short version for Linux:
+The short version for Linux by hand:
 
 ```sh
 # 1. Rust 1.87 or newer (https://rustup.rs), plus the drawing libraries (Debian/Ubuntu names):
@@ -58,7 +72,7 @@ cargo build --release --locked -p status-quo
 target/release/status-quo install
 ```
 
-And for Windows (PowerShell, after installing Rust with the MSVC build tools):
+And for Windows by hand (PowerShell, after installing Rust with the MSVC build tools):
 
 ```powershell
 git clone https://github.com/yujideluca/status-quo.git; cd status-quo

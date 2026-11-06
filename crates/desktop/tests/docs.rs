@@ -157,3 +157,110 @@ fn the_tour_names_every_chapter_it_promises() {
         );
     }
 }
+
+/// GitHub's anchor for a heading: lower case, punctuation dropped, spaces turned into hyphens.
+fn slug(heading: &str) -> String {
+    heading
+        .trim()
+        .to_lowercase()
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '-' || *c == '_')
+        .map(|c| if c == ' ' { '-' } else { c })
+        .collect()
+}
+
+// REQ SQ-40
+#[test]
+fn every_link_to_a_section_of_a_guide_points_at_a_real_heading() {
+    for page in PAGES {
+        let dir = Path::new(page).parent().unwrap();
+        let text = read(page);
+        for (open, close) in [("](", ")"), ("href=\"", "\"")] {
+            let mut rest = text.as_str();
+            while let Some(i) = rest.find(open) {
+                rest = &rest[i + open.len()..];
+                let Some(j) = rest.find(close) else { break };
+                let target = &rest[..j];
+                let Some((file, fragment)) = target.split_once('#') else {
+                    continue;
+                };
+                if target.starts_with("http") || !file.ends_with(".md") || fragment.is_empty() {
+                    continue;
+                }
+                let linked = read(dir.join(file).to_str().unwrap());
+                let headings: Vec<String> = linked
+                    .lines()
+                    .filter(|l| l.starts_with('#'))
+                    .map(|l| slug(l.trim_start_matches('#')))
+                    .collect();
+                assert!(
+                    headings.iter().any(|h| h == fragment),
+                    "{page} links to {target}, but {file} has no such heading ({headings:?})"
+                );
+            }
+        }
+    }
+}
+
+// REQ SQ-41
+#[test]
+fn the_installers_and_every_option_they_accept_are_documented_and_real() {
+    let script = read("tools/install.sh");
+    let setup = read("crates/setup/src/main.rs");
+    let guide = read("docs/guide/install.md");
+    let readme = read("README.md");
+    for flag in [
+        "--check-only",
+        "--dry-run",
+        "--uninstall",
+        "--yes",
+        "--no-deps",
+        "--repo",
+        "--src",
+    ] {
+        assert!(
+            script.contains(&format!("{flag})")) || script.contains(&format!("{flag} |")),
+            "install.sh lacks {flag}"
+        );
+        assert!(
+            guide.contains(flag),
+            "install guide does not describe {flag}"
+        );
+    }
+    for flag in [
+        "--check",
+        "--uninstall",
+        "--dry-run",
+        "--yes",
+        "--no-launch",
+    ] {
+        assert!(
+            setup.contains(&format!("\"{flag}\"")),
+            "the setup program lacks {flag}"
+        );
+        assert!(
+            guide.contains(&format!("status-quo-setup.exe {flag}")) || guide.contains(flag),
+            "guide misses {flag}"
+        );
+    }
+    for text in [&readme, &guide] {
+        assert!(
+            text.contains("tools/install.sh")
+                && text.contains("status-quo-setup.exe")
+                && text.contains("status-quo doctor")
+        );
+    }
+    assert!(
+        read("crates/desktop/src/main.rs").contains("status-quo doctor"),
+        "doctor is missing from --help"
+    );
+    assert!(read(".github/workflows/quality-gate.yml").contains("status-quo-setup-windows"));
+    assert!(read(".github/workflows/release.yml").contains("status-quo-setup.exe"));
+    // Every package manager the guide names is one the script handles.
+    for manager in ["apt-get", "dnf", "pacman", "zypper"] {
+        assert!(
+            script.contains(manager) && guide.contains(manager),
+            "{manager}"
+        );
+    }
+}

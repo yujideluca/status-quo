@@ -1,6 +1,69 @@
 # Install Status Quo
 
-Back to the [tour](../../README.md). There are no ready-made installers yet: you build the program once from source and then let it install itself **for your user only**. No `sudo` is needed after the libraries are in place.
+Back to the [tour](../../README.md). Two automatic installers do everything on this page for you; the manual steps follow so you can see (or change) each one. Either way the program installs itself **for your user only**.
+
+## The automatic installers
+
+### Linux: `tools/install.sh`
+
+```sh
+git clone https://github.com/yujideluca/status-quo.git
+cd status-quo
+bash tools/install.sh
+```
+
+It runs six steps and says what it is doing in each:
+
+| Step | What happens | Needs |
+|---|---|---|
+| 1. Check the computer | reads your distribution, architecture, session type, desktop, and whether `gh`, `claude` and `codex` are installed | nothing |
+| 2. Build libraries | installs a compiler, git, curl and pkg-config (and the drawing libraries' development files) with your package manager: `apt-get` (Debian, Ubuntu, Mint), `dnf` (Fedora, RHEL family), `pacman` (Arch, Manjaro) or `zypper` (openSUSE) | `sudo`, asked once |
+| 3. Rust | installs Rust 1.87 or newer through the official `rustup` into your home folder if it is missing or older | nothing |
+| 4. Source | uses the checkout it is run from, or clones the repository into `~/.local/share/status-quo/src` | network |
+| 5. Build and install | `cargo build --release --locked -p status-quo`, then `status-quo install`, then starts it if you are in a graphical session | nothing |
+| 6. Compatibility check | runs `status-quo doctor` (below) | nothing |
+
+| Option | Meaning |
+|---|---|
+| `--check-only` | look and report; change nothing |
+| `--dry-run` | print every command instead of running it |
+| `--yes` | do not ask questions (needed when there is no terminal) |
+| `--no-deps` | never use `sudo`; you install the libraries yourself |
+| `--uninstall` | remove Status Quo (settings and history stay) |
+| `--repo URL`, `--src DIR` | use another repository address or source folder |
+
+An unknown distribution stops at step 2 with the list of what to install by hand. The Debian and Ubuntu package names come from the project's CI; the dnf, pacman and zypper names are the usual ones and were checked only as printed commands (`--dry-run`), not installed on real machines. Only the Linux used for development (Kubuntu on KDE Plasma) has run the whole script for real.
+
+### Windows: `status-quo-setup.exe`
+
+One file, no administrator rights. Double-click it. It checks that this is Windows 10 or 11 on a 64-bit PC, unpacks the program it carries, installs it for your user, starts it, runs the compatibility check and waits for a key press so you can read the result.
+
+```text
+status-quo-setup.exe              install, start and check
+status-quo-setup.exe --check      only run the compatibility check
+status-quo-setup.exe --uninstall  remove Status Quo (layouts and history stay)
+status-quo-setup.exe --dry-run    list the steps without doing them
+status-quo-setup.exe --yes        do not wait for a key at the end
+status-quo-setup.exe --no-launch  install but do not start it now
+```
+
+Where to get it: attached to each tagged release (**Releases** page) and, for every CI run, as the artifact `status-quo-setup-windows` on the run's page. The installer is built by CI with the program embedded; if you build it yourself without the program inside, it looks for a `status-quo.exe` next to itself.
+
+### The compatibility check: `status-quo doctor`
+
+Both installers end with it, and you can run it whenever something looks wrong. Each line is `[ok]`, `[!]` (works, but something optional is missing) or `[x]` (blocks Status Quo), with the fix written under every problem:
+
+| Check | Blocks when |
+|---|---|
+| System | Windows older than 10 |
+| Display | a Linux terminal with no graphical session (neither `WAYLAND_DISPLAY` nor `DISPLAY`) |
+| Settings folder | the folder cannot be written |
+| Claude, Codex, workflow memory | never (the matching widgets show *unavailable*) |
+| GitHub | never (needs `gh` installed and signed in) |
+| Machine sensors, wallpaper | never |
+| Installation, collector | never (it tells you to run `status-quo install` or `status-quo`) |
+
+The exit code is 0 unless something blocks, so scripts can use it.
 
 ## What you need
 
@@ -13,7 +76,7 @@ Back to the [tour](../../README.md). There are no ready-made installers yet: you
 
 Status Quo never creates or refreshes a login. Without a sign-in, the matching widget shows *unavailable*; everything else keeps working.
 
-## Linux
+## Linux, step by step
 
 **1. Libraries.** The project's own continuous-integration job installs these on Ubuntu, so the Debian/Ubuntu line is the tested one:
 
@@ -59,7 +122,7 @@ STATUS_QUO_HOST=window status-quo        # layer-shell, x11 or window
 STATUS_QUO_ANCHOR=bottom-left status-quo # top, bottom, left, right, or a pair such as top-right (default)
 ```
 
-## Windows
+## Windows, step by step
 
 Windows 10 and 11 are supported; the test suite passes on both (Windows 10 LTSC 2021 and Windows 11 24H2 test machines), and the window was seen opening on Windows 11 with a software OpenGL driver.
 
