@@ -6,7 +6,7 @@ aviso_a = 0.8
 command = "tools/quality_gate.sh"
 required = true
 [architecture]
-# Pinned v0.4 checks Java/Kotlin; the gate runs tools/rust_architecture.rs for Rust.
+# Pinned v0.5 checks Java/Kotlin; the gate runs tools/rust_architecture.rs for Rust.
 pure_dirs = []
 build_files = []
 [[fitness]]
