@@ -1,0 +1,9 @@
+[package]
+name = "status-quo-setup"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "One-file Windows installer for Status Quo: carries the program, installs it for the current user and runs the compatibility check"
+build = "build.rs"
+# No dependencies on purpose: a small installer has little to go wrong.

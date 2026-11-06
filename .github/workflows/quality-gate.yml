@@ -41,3 +41,18 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --locked --workspace --all-targets
       - run: cargo test --locked --workspace
+      # The one-file Windows installer: the release program is built first and embedded.
+      - run: cargo build --locked --release -p status-quo
+      - name: Build status-quo-setup.exe with the program inside
+        run: cargo build --locked --release -p status-quo-setup
+        env:
+          STATUS_QUO_PAYLOAD: ${{ github.workspace }}\target\release\status-quo.exe
+      - name: Smoke test the installer and the compatibility check
+        run: |
+          target\release\status-quo-setup.exe --dry-run
+          target\release\status-quo.exe doctor
+      - uses: actions/upload-artifact@v4
+        with:
+          name: status-quo-setup-windows
+          path: target/release/status-quo-setup.exe
+          retention-days: 30

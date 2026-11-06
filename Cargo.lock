@@ -2957,6 +2957,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "status-quo-setup"
+version = "0.1.0"
+
+[[package]]
 name = "strum"
 version = "0.26.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
