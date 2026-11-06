@@ -1,8 +1,9 @@
-use crate::{command_json, timestamp};
+use crate::{command_json_env, timestamp};
 use serde_json::Value;
 use sq_core::{validate_repository, Activity};
 use std::{
     collections::BTreeMap,
+    path::Path,
     time::{Duration, Instant},
 };
 
@@ -70,6 +71,7 @@ pub fn github_records(
             .or_else(|| record.get("state").and_then(Value::as_str))
             .unwrap_or("");
         result.push(Activity {
+            account: String::new(),
             id: format!("{repository}:{kind}:{id}"),
             repository: repository.into(),
             kind: kind.into(),
@@ -94,6 +96,18 @@ pub struct GithubRead {
     pub deferred: usize,
 }
 pub fn fetch_github(repositories: &[String]) -> GithubRead {
+    fetch_github_as("github", None, repositories)
+}
+/// Reads the repositories with one `gh` login: the default one, or the one whose configuration
+/// folder is `config_dir`. Every record carries `account`.
+pub fn fetch_github_as(
+    account: &str,
+    config_dir: Option<&Path>,
+    repositories: &[String],
+) -> GithubRead {
+    let env: Vec<(&str, &std::ffi::OsStr)> = config_dir
+        .map(|d| vec![("GH_CONFIG_DIR", d.as_os_str())])
+        .unwrap_or_default();
     let deadline = Instant::now() + Duration::from_secs(120);
     let mut items = BTreeMap::new();
     let mut errors = Vec::new();
@@ -118,13 +132,14 @@ pub fn fetch_github(repositories: &[String]) -> GithubRead {
                     _ => kind,
                 };
                 let endpoint = format!("repos/{repository}/{suffix}?per_page=20&page={page}");
-                match command_json("gh", &["api", &endpoint], Duration::from_secs(10))
+                match command_json_env("gh", &["api", &endpoint], &env, Duration::from_secs(10))
                     .and_then(|value| github_records(repository, kind, &value))
                 {
                     Ok(records) => {
                         let count = records.len();
-                        for record in records {
-                            items.insert(record.id.clone(), record);
+                        for mut record in records {
+                            record.account = account.into();
+                            items.insert(format!("{account}|{}", record.id), record);
                         }
                         if count < 20 {
                             break;

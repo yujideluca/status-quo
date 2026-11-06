@@ -31,3 +31,13 @@ jobs:
           name: pipeline-report
           path: build/pipeline-check/report.json
           retention-days: 14
+  windows:
+    # The same code must build and pass its tests on a real Windows machine (requirement SQ-36).
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.87.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked --workspace --all-targets
+      - run: cargo test --locked --workspace

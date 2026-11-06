@@ -147,10 +147,10 @@ pub fn drag_rect(rect: egui::Rect, edges: Edges, delta: egui::Vec2) -> egui::Rec
     r
 }
 
-fn near(value: f32, candidates: impl IntoIterator<Item = f32>) -> Option<f32> {
+fn near(value: f32, allowed: (f32, f32), candidates: impl IntoIterator<Item = f32>) -> Option<f32> {
     candidates
         .into_iter()
-        .filter(|c| (c - value).abs() <= SNAP)
+        .filter(|c| (c - value).abs() <= SNAP && *c >= allowed.0 && *c <= allowed.1)
         .min_by(|a, b| (a - value).abs().total_cmp(&(b - value).abs()))
 }
 /// True when two ranges overlap once each is widened by `slack`.
@@ -169,12 +169,13 @@ pub fn snap_rect(rect: egui::Rect, edges: Edges, others: &[egui::Rect], gap: f32
     let beside = |o: &egui::Rect| overlaps(rows, (o.min.y, o.max.y), reach);
     let above_or_below = |o: &egui::Rect| overlaps(columns, (o.min.x, o.max.x), reach);
     if edges == Edges::BODY {
-        let shift = |lefts: Vec<f32>, rights: Vec<f32>, min: f32, max: f32| {
+        let shift = |lefts: Vec<f32>, rights: Vec<f32>, centers: Vec<f32>, min: f32, max: f32| {
             lefts
                 .into_iter()
                 .map(|c| c - min)
                 .chain(rights.into_iter().map(|c| c - max))
-                .filter(|s| s.abs() <= SNAP)
+                .chain(centers.into_iter().map(|c| c - (min + max) / 2.0))
+                .filter(|s| s.abs() <= SNAP && min + s >= 0.0)
                 .min_by(|a, b| a.abs().total_cmp(&b.abs()))
                 .unwrap_or(0.0)
         };
@@ -199,6 +200,7 @@ pub fn snap_rect(rect: egui::Rect, edges: Edges, others: &[egui::Rect], gap: f32
                     v
                 })
                 .collect(),
+            others.iter().map(|o| o.center().x).collect(),
             rect.min.x,
             rect.max.x,
         );
@@ -223,6 +225,7 @@ pub fn snap_rect(rect: egui::Rect, edges: Edges, others: &[egui::Rect], gap: f32
                     v
                 })
                 .collect(),
+            others.iter().map(|o| o.center().y).collect(),
             rect.min.y,
             rect.max.y,
         );
@@ -239,7 +242,11 @@ pub fn snap_rect(rect: egui::Rect, edges: Edges, others: &[egui::Rect], gap: f32
             v
         });
         let sizes = others.iter().map(|o| rect.max.x - o.width());
-        if let Some(x) = near(rect.min.x, edges_at).or_else(|| near(rect.min.x, sizes)) {
+        let centers = others.iter().map(|o| 2.0 * o.center().x - rect.max.x);
+        if let Some(x) = near(rect.min.x, (0.0, rect.max.x - MIN_SIZE.x), edges_at)
+            .or_else(|| near(rect.min.x, (0.0, rect.max.x - MIN_SIZE.x), centers))
+            .or_else(|| near(rect.min.x, (0.0, rect.max.x - MIN_SIZE.x), sizes))
+        {
             r.min.x = x.clamp(0.0, r.max.x - MIN_SIZE.x);
         }
     }
@@ -252,7 +259,11 @@ pub fn snap_rect(rect: egui::Rect, edges: Edges, others: &[egui::Rect], gap: f32
             v
         });
         let sizes = others.iter().map(|o| rect.min.x + o.width());
-        if let Some(x) = near(rect.max.x, edges_at).or_else(|| near(rect.max.x, sizes)) {
+        let centers = others.iter().map(|o| 2.0 * o.center().x - rect.min.x);
+        if let Some(x) = near(rect.max.x, (rect.min.x + MIN_SIZE.x, f32::MAX), edges_at)
+            .or_else(|| near(rect.max.x, (rect.min.x + MIN_SIZE.x, f32::MAX), centers))
+            .or_else(|| near(rect.max.x, (rect.min.x + MIN_SIZE.x, f32::MAX), sizes))
+        {
             r.max.x = x.max(r.min.x + MIN_SIZE.x);
         }
     }
@@ -265,7 +276,11 @@ pub fn snap_rect(rect: egui::Rect, edges: Edges, others: &[egui::Rect], gap: f32
             v
         });
         let sizes = others.iter().map(|o| rect.max.y - o.height());
-        if let Some(y) = near(rect.min.y, edges_at).or_else(|| near(rect.min.y, sizes)) {
+        let centers = others.iter().map(|o| 2.0 * o.center().y - rect.max.y);
+        if let Some(y) = near(rect.min.y, (0.0, rect.max.y - MIN_SIZE.y), edges_at)
+            .or_else(|| near(rect.min.y, (0.0, rect.max.y - MIN_SIZE.y), centers))
+            .or_else(|| near(rect.min.y, (0.0, rect.max.y - MIN_SIZE.y), sizes))
+        {
             r.min.y = y.clamp(0.0, r.max.y - MIN_SIZE.y);
         }
     }
@@ -278,11 +293,117 @@ pub fn snap_rect(rect: egui::Rect, edges: Edges, others: &[egui::Rect], gap: f32
             v
         });
         let sizes = others.iter().map(|o| rect.min.y + o.height());
-        if let Some(y) = near(rect.max.y, edges_at).or_else(|| near(rect.max.y, sizes)) {
+        let centers = others.iter().map(|o| 2.0 * o.center().y - rect.min.y);
+        if let Some(y) = near(rect.max.y, (rect.min.y + MIN_SIZE.y, f32::MAX), edges_at)
+            .or_else(|| near(rect.max.y, (rect.min.y + MIN_SIZE.y, f32::MAX), centers))
+            .or_else(|| near(rect.max.y, (rect.min.y + MIN_SIZE.y, f32::MAX), sizes))
+        {
             r.max.y = y.max(r.min.y + MIN_SIZE.y);
         }
     }
     r
+}
+
+/// What a highlighted line says about the dragged widget and one other widget.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum GuideKind {
+    /// Two borders sit on one line, or one gap apart.
+    Edge,
+    /// The two widgets share a centre axis.
+    Center,
+    /// The two widgets have the same width.
+    Width,
+    /// The two widgets have the same height.
+    Height,
+}
+/// A highlighted line segment in canvas coordinates.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Guide {
+    pub kind: GuideKind,
+    pub from: egui::Pos2,
+    pub to: egui::Pos2,
+}
+
+/// Lines to highlight for a settled rectangle: every border or centre axis of the dragged
+/// widget that lines up exactly with another widget, and equal widths or heights. Only what
+/// the drag moves is reported (a move reports alignment, not size), so the lines are exactly
+/// the points `snap_rect` makes sticky.
+pub fn guides(rect: egui::Rect, edges: Edges, others: &[egui::Rect], gap: f32) -> Vec<Guide> {
+    const TOLERANCE: f32 = 0.5;
+    let same = |a: f32, b: f32| (a - b).abs() < TOLERANCE;
+    let moving = edges == Edges::BODY;
+    let horizontal = edges.left || edges.right;
+    let vertical = edges.top || edges.bottom;
+    let mut out = Vec::new();
+    let vline = |out: &mut Vec<Guide>, kind, x: f32, o: &egui::Rect| {
+        out.push(Guide {
+            kind,
+            from: egui::pos2(x, rect.min.y.min(o.min.y)),
+            to: egui::pos2(x, rect.max.y.max(o.max.y)),
+        });
+    };
+    let hline = |out: &mut Vec<Guide>, kind, y: f32, o: &egui::Rect| {
+        out.push(Guide {
+            kind,
+            from: egui::pos2(rect.min.x.min(o.min.x), y),
+            to: egui::pos2(rect.max.x.max(o.max.x), y),
+        });
+    };
+    for o in others {
+        if edges.left
+            && (same(rect.min.x, o.min.x)
+                || same(rect.min.x, o.max.x + gap)
+                || same(rect.min.x, o.max.x))
+        {
+            vline(&mut out, GuideKind::Edge, rect.min.x, o);
+        }
+        if edges.right
+            && (same(rect.max.x, o.max.x)
+                || same(rect.max.x, o.min.x - gap)
+                || same(rect.max.x, o.min.x))
+        {
+            vline(&mut out, GuideKind::Edge, rect.max.x, o);
+        }
+        if edges.top
+            && (same(rect.min.y, o.min.y)
+                || same(rect.min.y, o.max.y + gap)
+                || same(rect.min.y, o.max.y))
+        {
+            hline(&mut out, GuideKind::Edge, rect.min.y, o);
+        }
+        if edges.bottom
+            && (same(rect.max.y, o.max.y)
+                || same(rect.max.y, o.min.y - gap)
+                || same(rect.max.y, o.min.y))
+        {
+            hline(&mut out, GuideKind::Edge, rect.max.y, o);
+        }
+        if (moving || horizontal) && same(rect.center().x, o.center().x) {
+            vline(&mut out, GuideKind::Center, rect.center().x, o);
+        }
+        if (moving || vertical) && same(rect.center().y, o.center().y) {
+            hline(&mut out, GuideKind::Center, rect.center().y, o);
+        }
+        if !moving && horizontal && same(rect.width(), o.width()) {
+            for r in [rect, *o] {
+                out.push(Guide {
+                    kind: GuideKind::Width,
+                    from: egui::pos2(r.min.x, r.max.y),
+                    to: egui::pos2(r.max.x, r.max.y),
+                });
+            }
+        }
+        if !moving && vertical && same(rect.height(), o.height()) {
+            for r in [rect, *o] {
+                out.push(Guide {
+                    kind: GuideKind::Height,
+                    from: egui::pos2(r.max.x, r.min.y),
+                    to: egui::pos2(r.max.x, r.max.y),
+                });
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -424,5 +545,224 @@ mod tests {
         let moved = snap_rect(r, Edges::BODY, &others, 12.0);
         assert_eq!((moved.min.x, moved.min.y), (812.0, 0.0));
         assert_eq!(moved.size(), r.size());
+    }
+
+    fn kinds(g: &[Guide]) -> Vec<GuideKind> {
+        g.iter().map(|g| g.kind).collect()
+    }
+    fn left() -> Edges {
+        Edges {
+            left: true,
+            ..Default::default()
+        }
+    }
+    fn right() -> Edges {
+        Edges {
+            right: true,
+            ..Default::default()
+        }
+    }
+    fn top() -> Edges {
+        Edges {
+            top: true,
+            ..Default::default()
+        }
+    }
+    fn bottom() -> Edges {
+        Edges {
+            bottom: true,
+            ..Default::default()
+        }
+    }
+
+    // REQ SQ-34: moving a widget sticks its centre to another widget's centre axis, both ways.
+    #[test]
+    fn a_moved_widget_sticks_to_the_centre_axes_of_others() {
+        let other = Rect::from_min_size(pos2(400.0, 400.0), vec2(300.0, 200.0));
+        // Horizontal centre: other centre x is 550; ours is 544 -> shifts 6 right.
+        let r = Rect::from_min_size(pos2(444.0, 100.0), vec2(200.0, 100.0));
+        let moved = snap_rect(r, Edges::BODY, &[other], 12.0);
+        assert_eq!(moved.center().x, 550.0);
+        assert_eq!(moved.min.y, 100.0, "y untouched");
+        assert!(kinds(&guides(moved, Edges::BODY, &[other], 12.0)).contains(&GuideKind::Center));
+        // Vertical centre: other centre y is 500; ours is 493.
+        let r = Rect::from_min_size(pos2(100.0, 443.0), vec2(100.0, 100.0));
+        let moved = snap_rect(r, Edges::BODY, &[other], 12.0);
+        assert_eq!(moved.center().y, 500.0);
+        assert_eq!(moved.min.x, 100.0, "x untouched");
+        // Beyond the snap distance nothing happens.
+        let r = Rect::from_min_size(pos2(444.0 - 11.0, 100.0), vec2(200.0, 100.0));
+        assert_eq!(snap_rect(r, Edges::BODY, &[other], 12.0), r);
+    }
+
+    // REQ SQ-34: resizing a border can put the widget's centre on another widget's axis.
+    #[test]
+    fn a_resized_border_sticks_to_make_the_centres_line_up() {
+        let other = Rect::from_min_size(pos2(0.0, 300.0), vec2(400.0, 200.0));
+        // Our box is 0..300 wide; the right border at 396 would centre it at 198; need 400.
+        let r = Rect::from_min_size(pos2(0.0, 0.0), vec2(396.0, 100.0));
+        // Right border near 400 is also this widget's equal-width point; both agree.
+        assert_eq!(snap_rect(r, right(), &[other], 12.0).max.x, 400.0);
+        // Centre only: ours starts at 100, other's centre x is 200 -> right border to 300.
+        let r = Rect::from_min_size(pos2(100.0, 0.0), vec2(205.0, 100.0));
+        let s = snap_rect(r, right(), &[other], 12.0);
+        assert_eq!(s.center().x, 200.0);
+        assert_eq!(s.max.x, 300.0);
+        // Left border: right at 300, other centre 200 -> left to 100.
+        let r = Rect::from_min_size(pos2(105.0, 0.0), vec2(195.0, 100.0));
+        let s = snap_rect(r, left(), &[other], 12.0);
+        assert_eq!(s.center().x, 200.0);
+        // Vertical: bottom border and top border.
+        let other = Rect::from_min_size(pos2(500.0, 0.0), vec2(100.0, 200.0));
+        let r = Rect::from_min_size(pos2(0.0, 50.0), vec2(100.0, 105.0));
+        let s = snap_rect(r, bottom(), &[other], 12.0);
+        assert_eq!(s.center().y, 100.0);
+        let r = Rect::from_min_size(pos2(0.0, 40.0), vec2(100.0, 115.0));
+        let s = snap_rect(r, top(), &[other], 12.0);
+        assert_eq!(s.center().y, 100.0);
+    }
+
+    // REQ SQ-34: every kind of line is reported for the border or axis that causes it.
+    #[test]
+    fn guides_name_the_edge_centre_and_size_matches() {
+        let other = Rect::from_min_size(pos2(500.0, 100.0), vec2(300.0, 200.0));
+        // Edge flush with the other's left border.
+        let r = Rect::from_min_size(pos2(500.0, 400.0), vec2(300.0, 100.0));
+        let g = guides(r, Edges::BODY, &[other], 12.0);
+        assert!(g
+            .iter()
+            .any(|g| g.kind == GuideKind::Edge && g.from.x == 500.0));
+        assert!(g
+            .iter()
+            .any(|g| g.kind == GuideKind::Edge && g.from.x == 800.0));
+        assert!(g
+            .iter()
+            .any(|g| g.kind == GuideKind::Center && g.from.x == 650.0));
+        // A move never reports sizes.
+        assert!(!kinds(&g).contains(&GuideKind::Width));
+        // Bottom border one gap above the other's top: edge line at that border.
+        let r = Rect::from_min_size(pos2(0.0, 0.0), vec2(300.0, 88.0));
+        let g = guides(r, bottom(), &[other], 12.0);
+        assert!(g
+            .iter()
+            .any(|g| g.kind == GuideKind::Edge && g.from.y == 88.0));
+        // Same width: two bars, one under each widget.
+        let r = Rect::from_min_size(pos2(0.0, 0.0), vec2(300.0, 50.0));
+        let g = guides(r, right(), &[other], 12.0);
+        let bars: Vec<_> = g.iter().filter(|g| g.kind == GuideKind::Width).collect();
+        assert_eq!(bars.len(), 2);
+        assert!(bars.iter().all(|b| b.to.x - b.from.x == 300.0));
+        // Same height.
+        let r = Rect::from_min_size(pos2(0.0, 0.0), vec2(80.0, 200.0));
+        let g = guides(r, bottom(), &[other], 12.0);
+        assert_eq!(g.iter().filter(|g| g.kind == GuideKind::Height).count(), 2);
+        // A border that is not being dragged is not reported even if it lines up.
+        let r = Rect::from_min_size(pos2(500.0, 0.0), vec2(300.0, 50.0));
+        let g = guides(r, bottom(), &[other], 12.0);
+        assert!(!g
+            .iter()
+            .any(|g| g.kind == GuideKind::Edge && g.from.x == 500.0));
+        // Far from everything: no lines.
+        let r = Rect::from_min_size(pos2(1000.0, 1000.0), vec2(77.0, 55.0));
+        assert!(guides(r, Edges::BODY, &[other], 12.0).is_empty());
+        assert!(guides(r, right(), &[], 12.0).is_empty());
+    }
+
+    // REQ SQ-34: guides join widgets that overlap on the other axis with a line spanning both.
+    #[test]
+    fn a_guide_spans_both_widgets() {
+        let other = Rect::from_min_size(pos2(0.0, 300.0), vec2(100.0, 100.0));
+        let r = Rect::from_min_size(pos2(0.0, 0.0), vec2(100.0, 100.0));
+        let g = guides(r, left(), &[other], 12.0);
+        let line = g.iter().find(|g| g.kind == GuideKind::Edge).unwrap();
+        assert_eq!((line.from.y, line.to.y), (0.0, 400.0));
+    }
+
+    // REQ SQ-34: sticky points are consistent, over thousands of random drags.
+    #[test]
+    fn snapping_is_deterministic_bounded_and_always_explained_by_a_guide() {
+        let mut state = 0x2545_F491_4F6C_DD1D_u64;
+        let mut next = move |max: f32| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state % 10_000) as f32 / 10_000.0 * max
+        };
+        let all = [
+            Edges::BODY,
+            left(),
+            right(),
+            top(),
+            bottom(),
+            Edges {
+                right: true,
+                bottom: true,
+                ..Default::default()
+            },
+            Edges {
+                left: true,
+                top: true,
+                ..Default::default()
+            },
+        ];
+        let mut stuck = 0;
+        for round in 0..6_000 {
+            let others: Vec<Rect> = (0..1 + round % 4)
+                .map(|_| {
+                    Rect::from_min_size(
+                        pos2(next(900.0).round(), next(900.0).round()),
+                        vec2(
+                            MIN_SIZE.x + next(500.0).round(),
+                            MIN_SIZE.y + next(400.0).round(),
+                        ),
+                    )
+                })
+                .collect();
+            let edges = all[round % all.len()];
+            let gap = [0.0, 8.0, 12.0, 40.0][round % 4];
+            let r = Rect::from_min_size(
+                pos2(next(900.0).round(), next(900.0).round()),
+                vec2(
+                    MIN_SIZE.x + next(500.0).round(),
+                    MIN_SIZE.y + next(400.0).round(),
+                ),
+            );
+            let s = snap_rect(r, edges, &others, gap);
+            assert!(s.min.x >= 0.0 && s.min.y >= 0.0, "left the canvas: {s:?}");
+            assert!(
+                s.width() >= MIN_SIZE.x - 0.01 && s.height() >= MIN_SIZE.y - 0.01,
+                "smaller than the minimum: {s:?} from {r:?}"
+            );
+            if edges == Edges::BODY {
+                assert!((s.width() - r.width()).abs() < 0.01, "a move resized");
+                assert!((s.height() - r.height()).abs() < 0.01, "a move resized");
+            }
+            // Nothing moves further than the snap distance (plus the canvas clamp).
+            let travel = |a: f32, b: f32| (a - b).abs();
+            for (a, b) in [
+                (s.min.x, r.min.x),
+                (s.max.x, r.max.x),
+                (s.min.y, r.min.y),
+                (s.max.y, r.max.y),
+            ] {
+                if r.min.x >= SNAP && r.min.y >= SNAP {
+                    assert!(travel(a, b) <= SNAP * 2.0 + 0.01, "jumped {a} from {b}");
+                }
+            }
+            // The same drag always lands on the same point.
+            assert_eq!(s, snap_rect(r, edges, &others, gap));
+            // Whenever the rectangle moved, a line explains why.
+            if (s.min - r.min).length() > 0.01 || (s.max - r.max).length() > 0.01 {
+                stuck += 1;
+                assert!(
+                    !guides(s, edges, &others, gap).is_empty(),
+                    "stuck without a line: {r:?} -> {s:?} ({edges:?}, gap {gap}, {others:?})"
+                );
+            }
+        }
+        assert!(
+            stuck > 300,
+            "the random drags barely exercised snapping: {stuck}"
+        );
     }
 }

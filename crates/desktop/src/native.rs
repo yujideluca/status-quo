@@ -4,6 +4,7 @@ use std::{
     path::Path,
     process::{Command, Stdio},
 };
+#[cfg(target_os = "linux")]
 use x11rb::{
     connection::Connection,
     protocol::{randr::ConnectionExt as _, xproto::ConnectionExt as _},
@@ -16,6 +17,12 @@ pub fn level(layer: Layer) -> egui::WindowLevel {
         Layer::Above => egui::WindowLevel::AlwaysOnTop,
     }
 }
+#[cfg(not(target_os = "linux"))]
+pub fn capabilities() -> String {
+    "Windows: ordinary window; it can stay on top or behind other windows (Window layer setting)."
+        .into()
+}
+#[cfg(target_os = "linux")]
 pub fn capabilities() -> String {
     if x11rb::connect(None).is_ok() {
         "X11 / XWayland: window layers available; compositor controls background transparency."
@@ -30,6 +37,12 @@ pub struct Monitor {
     pub rect: egui::Rect,
 }
 /// Coordinates use the same logical scale as egui's viewport rectangles.
+#[cfg(not(target_os = "linux"))]
+pub fn monitors(_pixels_per_point: f32) -> Vec<Monitor> {
+    // No global monitor list here: `recover_geometry` falls back to the window's own monitor size.
+    vec![]
+}
+#[cfg(target_os = "linux")]
 pub fn monitors(pixels_per_point: f32) -> Vec<Monitor> {
     let Ok((connection, screen)) = x11rb::connect(None) else {
         return vec![];
@@ -127,6 +140,44 @@ pub fn recover_geometry(ctx: &egui::Context) {
         }
     }
 }
+/// The program that opens a URL or a folder with the desktop's default handler. Never a shell:
+/// the target is one argument, so characters like `&` in it cannot start another command.
+fn opener(target: impl AsRef<std::ffi::OsStr>) -> Command {
+    if cfg!(windows) {
+        let mut c = Command::new("rundll32.exe");
+        c.arg("url.dll,FileProtocolHandler").arg(target);
+        c
+    } else {
+        let mut c = Command::new("xdg-open");
+        c.arg(target);
+        c
+    }
+}
+/// Find a program on `PATH` the way a Windows shell would: npm installs tools as `.cmd` files.
+fn find_on_path(name: &str) -> Option<std::path::PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path).find_map(|dir| {
+        ["exe", "cmd", "bat"]
+            .iter()
+            .map(|ext| dir.join(format!("{name}.{ext}")))
+            .find(|candidate| candidate.is_file())
+    })
+}
+/// Resume a session in a new console window (Windows): the tool runs directly in the project
+/// folder; there is no shell command line to quote.
+pub fn windows_session(tool: &str, id: &str, project: &Path) -> Command {
+    let program = find_on_path(tool).unwrap_or_else(|| std::path::PathBuf::from(tool));
+    let mut c = Command::new(program);
+    if tool == "claude" {
+        c.arg("--resume").arg(id);
+    } else {
+        c.arg("resume").arg(id);
+    }
+    c.current_dir(project);
+    #[cfg(windows)]
+    std::os::windows::process::CommandExt::creation_flags(&mut c, 0x0000_0010); // CREATE_NEW_CONSOLE
+    c
+}
 fn navigation_command(action: HostAction) -> Result<Option<Command>, String> {
     let command = match action {
         HostAction::OpenUrl(url) => {
@@ -141,24 +192,21 @@ fn navigation_command(action: HostAction) -> Result<Option<Command>, String> {
             {
                 return Err("Navigation URL scheme or host is not allowed".into());
             }
-            let mut c = Command::new("xdg-open");
-            c.arg(url);
-            c
+            opener(url)
         }
         HostAction::OpenProject(path) | HostAction::OpenMemory(path) => {
             if !Path::new(&path).is_absolute() || !Path::new(&path).exists() {
                 return Err("Source path is unavailable".into());
             }
-            let mut c = Command::new("xdg-open");
-            c.arg(path);
-            c
+            opener(path)
         }
         HostAction::OpenSession {
             assistant,
             id,
             project,
         } => {
-            if !["claude", "codex"].contains(&assistant.as_str())
+            let tool = sq_core::account_kind(&assistant).to_string();
+            if !["claude", "codex"].contains(&tool.as_str())
                 || id.is_empty()
                 || id.len() > 200
                 || !id
@@ -169,9 +217,12 @@ fn navigation_command(action: HostAction) -> Result<Option<Command>, String> {
             {
                 return Err("Session navigation requires a supported provider, identity and project directory".into());
             }
+            if cfg!(windows) {
+                return Ok(Some(windows_session(&tool, &id, Path::new(&project))));
+            }
             let mut c = Command::new("konsole");
-            c.arg("--workdir").arg(project).arg("-e").arg(&assistant);
-            if assistant == "claude" {
+            c.arg("--workdir").arg(project).arg("-e").arg(&tool);
+            if tool == "claude" {
                 c.arg("--resume").arg(id);
             } else {
                 c.arg("resume").arg(id);
@@ -196,6 +247,44 @@ pub fn navigate(action: HostAction) -> Result<(), String> {
     }
     Ok(())
 }
+/// File access for the folder navigator of Customize (SQ-39): read-only folder listings.
+pub struct Folders;
+impl sq_tray::FolderBrowser for Folders {
+    fn home(&self) -> String {
+        std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .unwrap_or_else(|_| {
+                if cfg!(windows) {
+                    "C:\\".into()
+                } else {
+                    "/".into()
+                }
+            })
+    }
+    fn roots(&self) -> Vec<String> {
+        if cfg!(windows) {
+            ('A'..='Z')
+                .map(|c| format!("{c}:\\"))
+                .filter(|d| std::path::Path::new(d).exists())
+                .collect()
+        } else {
+            vec!["/".into()]
+        }
+    }
+    fn folders(&self, folder: &str) -> Result<Vec<String>, String> {
+        let mut names: Vec<String> = std::fs::read_dir(folder)
+            .map_err(|e| e.to_string())?
+            .flatten()
+            .take(20_000)
+            .filter(|e| std::fs::metadata(e.path()).is_ok_and(|m| m.is_dir()))
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect();
+        // Visible folders first, then hidden ones (the assistants keep theirs in `.claude`, `.codex`).
+        names.sort_by_key(|n| (n.starts_with('.'), n.to_lowercase()));
+        Ok(names)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -237,19 +326,53 @@ mod tests {
         assert!(
             navigation_command(HostAction::OpenUrl("https://github.com/example\n".into())).is_err()
         );
+        let project = std::env::temp_dir();
         let command = navigation_command(HostAction::OpenSession {
             assistant: "codex".into(),
             id: "safe-id".into(),
-            project: "/tmp".into(),
+            project: project.to_string_lossy().into(),
         })
         .unwrap()
         .unwrap();
-        assert_eq!(
-            command
-                .get_args()
-                .map(|a| a.to_str().unwrap())
-                .collect::<Vec<_>>(),
-            vec!["--workdir", "/tmp", "-e", "codex", "resume", "safe-id"]
-        );
+        let args: Vec<_> = command
+            .get_args()
+            .map(|a| a.to_str().unwrap().to_string())
+            .collect();
+        if cfg!(windows) {
+            // No terminal wrapper: the tool itself runs in a new console in the project folder.
+            assert_eq!(args, ["resume", "safe-id"]);
+            assert_eq!(command.get_current_dir(), Some(project.as_path()));
+        } else {
+            assert_eq!(
+                args,
+                [
+                    "--workdir",
+                    project.to_str().unwrap(),
+                    "-e",
+                    "codex",
+                    "resume",
+                    "safe-id"
+                ]
+            );
+        }
+    }
+    // REQ SQ-36: on Windows a session is resumed in the project folder without a shell line,
+    // and a link is opened by one argument to the system handler.
+    #[test]
+    fn windows_navigation_uses_no_shell_and_keeps_targets_as_one_argument() {
+        let command = windows_session("claude", "abc-123", Path::new("/work/my app"));
+        let args: Vec<_> = command.get_args().map(|a| a.to_str().unwrap()).collect();
+        assert_eq!(args, ["--resume", "abc-123"]);
+        assert_eq!(command.get_current_dir(), Some(Path::new("/work/my app")));
+        let command = windows_session("codex", "xyz", Path::new("/p"));
+        let args: Vec<_> = command.get_args().map(|a| a.to_str().unwrap()).collect();
+        assert_eq!(args, ["resume", "xyz"]);
+        let tricky = "https://github.com/o/r/pull/1?a=1&b=calc.exe";
+        let command = opener(tricky);
+        let last = command.get_args().last().unwrap().to_str().unwrap();
+        assert_eq!(last, tricky, "one argument, never split or interpreted");
+        let program = command.get_program().to_str().unwrap();
+        assert!(["rundll32.exe", "xdg-open"].contains(&program));
+        assert!(!program.contains("cmd") && !program.contains("sh"));
     }
 }

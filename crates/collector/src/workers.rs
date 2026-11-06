@@ -4,6 +4,7 @@ use sq_core::*;
 use sq_sources::*;
 use sq_store::{atomic_json, read_json, Store};
 use std::{
+    collections::BTreeMap,
     collections::BTreeSet,
     path::PathBuf,
     sync::{
@@ -30,13 +31,11 @@ pub fn start(
         }
     }
     let mut workers = Vec::new();
-    for provider in ["claude", "codex"] {
+    {
         let store = store.clone();
         let snapshot = snapshot.clone();
         let stop = stop.clone();
-        workers.push(thread::spawn(move || {
-            account(provider, store, snapshot, stop)
-        }));
+        workers.push(thread::spawn(move || accounts(store, snapshot, stop)));
     }
     {
         let store = store.clone();
@@ -50,8 +49,314 @@ pub fn start(
         let stop = stop.clone();
         workers.push(thread::spawn(move || memory(store, snapshot, stop)));
     }
+    {
+        let store = store.clone();
+        let snapshot = snapshot.clone();
+        let stop = stop.clone();
+        workers.push(thread::spawn(move || system(store, snapshot, stop)));
+    }
+    {
+        let store = store.clone();
+        let snapshot = snapshot.clone();
+        let stop = stop.clone();
+        workers.push(thread::spawn(move || gpu(store, snapshot, stop)));
+    }
     workers.push(thread::spawn(move || local(store, snapshot, stop)));
     workers
+}
+/// Keeps one `nvidia-smi -l 5` child that streams readings; killing it lets the GPU sleep again.
+struct GpuReader {
+    child: std::process::Child,
+    latest: Arc<Mutex<Option<(Instant, String)>>>,
+}
+impl GpuReader {
+    fn start(slot: &str) -> Option<Self> {
+        use std::io::BufRead;
+        let mut child = std::process::Command::new("nvidia-smi")
+            .args([
+                "-i",
+                slot,
+                "--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw",
+                "--format=csv,noheader,nounits",
+                "-l",
+                "5",
+            ])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .ok()?;
+        let out = child.stdout.take()?;
+        let latest = Arc::new(Mutex::new(None));
+        let sink = latest.clone();
+        thread::spawn(move || {
+            for line in std::io::BufReader::new(out).lines().map_while(Result::ok) {
+                if let Ok(mut slot) = sink.lock() {
+                    *slot = Some((Instant::now(), line));
+                }
+            }
+        });
+        Some(Self { child, latest })
+    }
+    fn latest(&self) -> Option<GpuReading> {
+        let (at, line) = self.latest.lock().ok()?.clone()?;
+        (at.elapsed() < Duration::from_secs(15))
+            .then(|| parse_gpu_line(&line))
+            .flatten()
+    }
+}
+impl Drop for GpuReader {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+/// How long after we last touched a sleeping-capable GPU before an awake GPU counts as used by
+/// something else (a device stays awake for some seconds after any reading).
+const GPU_OWN_WAKE: Duration = Duration::from_secs(30);
+const GPU_IDLE_SAMPLES: u32 = 3;
+/// Per-device sampling state.
+struct GpuTrack {
+    device: GpuDevice,
+    nvidia: Option<GpuReader>,
+    /// A discrete device is being read right now (it was awake for another reason).
+    reading: bool,
+    last_touch: Option<Instant>,
+    idle_samples: u32,
+    rc6: Option<(u64, Instant)>,
+}
+impl GpuTrack {
+    fn new(device: GpuDevice) -> Self {
+        Self {
+            device,
+            nvidia: None,
+            reading: false,
+            last_touch: None,
+            idle_samples: 0,
+            rc6: None,
+        }
+    }
+    fn sample(
+        &mut self,
+        windows: Option<&std::collections::BTreeMap<String, GpuReading>>,
+    ) -> GpuSample {
+        let blank = |state, reading: GpuReading| GpuSample {
+            id: self.device.id.clone(),
+            name: self.device.name.clone(),
+            at: now(),
+            state,
+            util: reading.util,
+            vram_used: reading.vram_used,
+            vram_total: reading.vram_total,
+            temp: reading.temp,
+            power: reading.power,
+            clock: reading.clock,
+            awake_share: reading.awake_share,
+        };
+        if !self.device.discrete {
+            if self.device.device.as_os_str().is_empty() && self.device.slot.is_empty() {
+                // Windows, any vendor: the shared performance-counter reading of this adapter.
+                let reading = self
+                    .device
+                    .luid
+                    .as_ref()
+                    .and_then(|luid| windows?.get(luid))
+                    .copied();
+                return match reading {
+                    Some(mut reading) => {
+                        reading.vram_total = self
+                            .device
+                            .vram_bytes
+                            .map(|bytes| (bytes / (1024 * 1024)) as f32);
+                        blank(GpuState::Reading, reading)
+                    }
+                    None => blank(GpuState::Waiting, GpuReading::default()),
+                };
+            }
+            if self.device.device.as_os_str().is_empty() {
+                // Windows, NVIDIA with `nvidia-smi`: one child streams the readings.
+                if self.nvidia.is_none() {
+                    self.nvidia = GpuReader::start(&self.device.slot);
+                }
+                return match self.nvidia.as_ref().and_then(GpuReader::latest) {
+                    Some(reading) => blank(GpuState::Reading, reading),
+                    None => blank(GpuState::Waiting, GpuReading::default()),
+                };
+            }
+            // The display adapter is always awake: reading it costs nothing extra.
+            let reading = read_gpu(&self.device, &mut self.rc6);
+            return blank(GpuState::Reading, reading);
+        }
+        if !self.reading {
+            if runtime_status(&self.device) != "active" {
+                self.rc6 = None;
+                return blank(GpuState::Asleep, GpuReading::default());
+            }
+            if self.last_touch.is_some_and(|t| t.elapsed() < GPU_OWN_WAKE) {
+                return blank(GpuState::Waiting, GpuReading::default());
+            }
+            // Awake and not by our doing: something else is using it, so start reading.
+            self.reading = true;
+            self.idle_samples = 0;
+            if self.device.vendor == Vendor::Nvidia {
+                self.nvidia = GpuReader::start(&self.device.slot);
+            }
+        }
+        self.last_touch = Some(Instant::now());
+        let reading = match (&self.nvidia, self.device.vendor) {
+            (Some(reader), _) => reader.latest(),
+            (None, Vendor::Nvidia) => None,
+            (None, _) => Some(read_gpu(&self.device, &mut self.rc6)),
+        };
+        let Some(reading) = reading else {
+            return blank(GpuState::Waiting, GpuReading::default());
+        };
+        self.idle_samples = if gpu_is_idle(&reading) {
+            self.idle_samples + 1
+        } else {
+            0
+        };
+        if self.idle_samples >= GPU_IDLE_SAMPLES {
+            // Idle again: stop touching it so it can sleep.
+            self.reading = false;
+            self.nvidia = None;
+        }
+        blank(GpuState::Reading, reading)
+    }
+}
+/// The GPU widget's sampler, for every GPU of any vendor. Display adapters are read directly.
+/// A discrete GPU can power itself down and many queries wake it, so its power state is read from
+/// sysfs (free) and it is measured only while something else has it awake, until it is idle again.
+fn gpu(store: Arc<Store>, snapshot: Arc<RwLock<Snapshot>>, stop: Arc<AtomicBool>) {
+    let mut tracks: Vec<GpuTrack> = Vec::new();
+    let mut scanned: Option<Instant> = None;
+    // Windows performance counters, opened when an adapter needs them.
+    let mut counters: Option<WindowsGpuCounters> = None;
+    let mut counters_tried = false;
+    while !stop.load(Ordering::Acquire) {
+        let wanted = store
+            .configuration()
+            .map(|c| c.config.widgets.iter().any(|w| w.kind == "gpu"))
+            .unwrap_or(false);
+        if !wanted {
+            tracks.clear();
+            scanned = None;
+            counters = None;
+            counters_tried = false;
+            if let Ok(mut current) = snapshot.write() {
+                if !current.gpu.is_empty() {
+                    current.gpu.clear();
+                    current.revision = current.revision.saturating_add(1);
+                }
+            }
+            sleep(&stop, Duration::from_secs(SYSTEM_INTERVAL));
+            continue;
+        }
+        if scanned.is_none_or(|at| at.elapsed() >= Duration::from_secs(60)) {
+            // Rescan once a minute for added or removed adapters; keep state of known ones.
+            let mut next = Vec::new();
+            for device in discover_gpus() {
+                match tracks.iter().position(|t| t.device.id == device.id) {
+                    Some(index) => next.push(tracks.swap_remove(index)),
+                    None => next.push(GpuTrack::new(device)),
+                }
+            }
+            tracks = next;
+            scanned = Some(Instant::now());
+        }
+        let samples: Vec<GpuSample> = if tracks.is_empty() {
+            vec![GpuSample {
+                id: "none".into(),
+                name: "GPU".into(),
+                at: now(),
+                state: GpuState::Absent,
+                util: None,
+                vram_used: None,
+                vram_total: None,
+                temp: None,
+                power: None,
+                clock: None,
+                awake_share: false,
+            }]
+        } else {
+            if !counters_tried && tracks.iter().any(|t| t.device.luid.is_some()) {
+                counters_tried = true;
+                counters = WindowsGpuCounters::open();
+            }
+            let windows = counters.as_mut().and_then(WindowsGpuCounters::sample);
+            // The registry also lists adapters that are gone (an old display driver, another
+            // boot's software adapter): once the counters answer, those have no instance.
+            tracks
+                .iter_mut()
+                .filter(|track| match (&track.device.luid, &windows) {
+                    (Some(luid), Some(map)) if !map.is_empty() => map.contains_key(luid),
+                    // Counters are open but still priming: show nothing rather than ghosts.
+                    (Some(_), None) if counters.is_some() => false,
+                    _ => true,
+                })
+                .map(|track| track.sample(windows.as_ref()))
+                .collect()
+        };
+        if let Ok(mut current) = snapshot.write() {
+            let keep = SYSTEM_KEEP * samples.len();
+            current.gpu.extend(samples);
+            let excess = current.gpu.len().saturating_sub(keep);
+            current.gpu.drain(..excess);
+            current.revision = current.revision.saturating_add(1);
+        }
+        sleep(&stop, Duration::from_secs(SYSTEM_INTERVAL));
+    }
+}
+/// Seconds between samples and samples kept: ten minutes of history in memory only.
+const SYSTEM_INTERVAL: u64 = 5;
+const SYSTEM_KEEP: usize = 120;
+/// Samples CPU and temperature only while a system widget exists. It reads two tiny kernel files,
+/// pushes onto a bounded buffer under one short lock (no snapshot clone) and sleeps otherwise.
+fn system(store: Arc<Store>, snapshot: Arc<RwLock<Snapshot>>, stop: Arc<AtomicBool>) {
+    let mut previous = None;
+    let mut sensor: Option<PathBuf> = None;
+    while !stop.load(Ordering::Acquire) {
+        let wanted = store
+            .configuration()
+            .map(|c| {
+                c.config
+                    .widgets
+                    .iter()
+                    .any(|w| w.kind == "system" || w.kind == "ram")
+            })
+            .unwrap_or(false);
+        if !wanted {
+            previous = None;
+            if let Ok(mut current) = snapshot.write() {
+                if !current.system.is_empty() {
+                    current.system.clear();
+                    current.revision = current.revision.saturating_add(1);
+                }
+            }
+            sleep(&stop, Duration::from_secs(SYSTEM_INTERVAL));
+            continue;
+        }
+        let reading = cpu_counters();
+        let Some(before) = previous.replace(reading).flatten() else {
+            // Baseline for the first share: a second reading comes one second later.
+            sleep(&stop, Duration::from_secs(1));
+            continue;
+        };
+        sensor = sensor.or_else(find_temperature_sensor);
+        let sample = SystemSample {
+            at: now(),
+            cpu: reading.and_then(|r| cpu_percent(before, r)),
+            temp: sensor.as_deref().and_then(read_temperature),
+            ram: memory_sample(),
+        };
+        if let Ok(mut current) = snapshot.write() {
+            current.system.push(sample);
+            let excess = current.system.len().saturating_sub(SYSTEM_KEEP);
+            current.system.drain(..excess);
+            current.revision = current.revision.saturating_add(1);
+        }
+        sleep(&stop, Duration::from_secs(SYSTEM_INTERVAL));
+    }
 }
 fn sleep(stop: &AtomicBool, duration: Duration) {
     let until = Instant::now() + duration;
@@ -59,110 +364,167 @@ fn sleep(stop: &AtomicBool, duration: Duration) {
         thread::sleep(Duration::from_millis(100));
     }
 }
-fn account(
-    provider: &str,
-    store: Arc<Store>,
-    snapshot: Arc<RwLock<Snapshot>>,
-    stop: Arc<AtomicBool>,
-) {
-    let mut failures = 0;
+/// Reads the usage of every Claude and Codex account in turn: the two default ones and any extra
+/// account of the configuration. Each account keeps its own failure back-off and health entry.
+fn accounts(store: Arc<Store>, snapshot: Arc<RwLock<Snapshot>>, stop: Arc<AtomicBool>) {
+    let mut due: BTreeMap<String, (Instant, u32)> = BTreeMap::new();
     while !stop.load(Ordering::Acquire) {
         let Ok(saved) = store.configuration() else {
             break;
         };
-        let time = now();
-        let result = if provider == "claude" {
-            fetch_claude(&expand(&saved.config.sources.claude), time)
-        } else {
-            fetch_codex(time)
-        };
-        let interval = if result.is_ok() {
-            failures = 0;
-            saved.config.sources.poll_seconds
-        } else {
-            failures += 1;
-            (saved.config.sources.poll_seconds * 2u64.saturating_pow(failures.min(3))).min(3600)
-        };
-        update(&snapshot, |s| match result {
-            Ok(usage) => {
-                s.usage.insert(provider.into(), usage);
-                s.health.insert(
-                    provider.into(),
-                    Health {
-                        state: SourceState::Fresh,
-                        last_success: Some(time),
-                        retry_at: Some(time + interval as i64),
-                        message: "Account status; no generation request".into(),
-                        ..Health::default()
-                    },
-                );
+        let sources = saved.config.sources.clone();
+        let list = sources.assistant_accounts();
+        due.retain(|key, _| list.iter().any(|(k, ..)| k == key));
+        for (key, kind, home) in list {
+            let (next, failures) = due.get(&key).copied().unwrap_or((Instant::now(), 0));
+            if Instant::now() < next || stop.load(Ordering::Acquire) {
+                continue;
             }
-            Err(error) => {
-                let last = s.health.get(provider).and_then(|h| h.last_success);
-                s.health.insert(
-                    provider.into(),
-                    Health {
-                        state: if s.usage.contains_key(provider) {
-                            SourceState::Stale
-                        } else {
-                            SourceState::Unavailable
+            let time = now();
+            let result = if kind == "claude" {
+                fetch_claude(&expand(&home), time)
+            } else if key == "codex" {
+                fetch_codex(None, time)
+            } else {
+                fetch_codex(Some(&expand(&home)), time)
+            };
+            let failures = if result.is_ok() { 0 } else { failures + 1 };
+            let interval = if result.is_ok() {
+                sources.poll_seconds
+            } else {
+                (sources.poll_seconds * 2u64.saturating_pow(failures.min(3))).min(3600)
+            };
+            due.insert(
+                key.clone(),
+                (Instant::now() + Duration::from_secs(interval), failures),
+            );
+            let provider = key.as_str();
+            update(&snapshot, |s| match result {
+                Ok(usage) => {
+                    s.usage.insert(provider.into(), usage);
+                    s.health.insert(
+                        provider.into(),
+                        Health {
+                            state: SourceState::Fresh,
+                            last_success: Some(time),
+                            retry_at: Some(time + interval as i64),
+                            message: "Account status; no generation request".into(),
+                            ..Health::default()
                         },
-                        last_success: last,
-                        retry_at: Some(time + interval as i64),
-                        message: error,
-                        ..Health::default()
-                    },
-                );
-            }
-        });
-        sleep(&stop, Duration::from_secs(interval));
+                    );
+                }
+                Err(error) => {
+                    let last = s.health.get(provider).and_then(|h| h.last_success);
+                    s.health.insert(
+                        provider.into(),
+                        Health {
+                            state: if s.usage.contains_key(provider) {
+                                SourceState::Stale
+                            } else {
+                                SourceState::Unavailable
+                            },
+                            last_success: last,
+                            retry_at: Some(time + interval as i64),
+                            message: error,
+                            ..Health::default()
+                        },
+                    );
+                }
+            });
+        }
+        // Wake often enough to notice a new account or a due retry without busy waiting.
+        sleep(&stop, Duration::from_secs(15));
     }
 }
+/// Reads recent GitHub activity for the default `gh` login and for every extra GitHub account.
 fn github(store: Arc<Store>, snapshot: Arc<RwLock<Snapshot>>, stop: Arc<AtomicBool>) {
     while !stop.load(Ordering::Acquire) {
         let Ok(saved) = store.configuration() else {
             break;
         };
         let time = now();
-        let result = fetch_github(&saved.config.repositories);
-        update(&snapshot, |s| {
-            // Keep previous observations when one endpoint fails, then merge stable identities.
-            let mut items: std::collections::BTreeMap<_, _> = s
-                .activity
-                .iter()
-                .filter(|a| saved.config.repositories.contains(&a.repository))
-                .map(|a| (a.id.clone(), a.clone()))
-                .collect();
-            for item in result.items {
-                items.insert(item.id.clone(), item);
+        // (key, gh configuration folder, repositories)
+        let mut logins: Vec<(String, Option<PathBuf>, Vec<String>)> =
+            vec![("github".into(), None, saved.config.repositories.clone())];
+        for a in saved
+            .config
+            .sources
+            .accounts
+            .iter()
+            .filter(|a| a.kind == "github")
+        {
+            let folder = (!a.path.is_empty()).then(|| expand(&a.path));
+            logins.push((a.key(), folder, a.repositories.clone()));
+        }
+        for (key, folder, repositories) in logins {
+            if stop.load(Ordering::Acquire) {
+                return;
             }
-            s.activity = items
-                .into_values()
-                .filter(|a| a.at >= time - 30 * 86400)
-                .collect();
-            s.activity.sort_by_key(|a| std::cmp::Reverse(a.at));
-            s.activity.truncate(500);
-            let state = if result.errors.is_empty() {
-                if s.activity.is_empty() {
-                    SourceState::Empty
-                } else {
-                    SourceState::Fresh
+            let result = fetch_github_as(&key, folder.as_deref(), &repositories);
+            update(&snapshot, |s| {
+                // Keep previous observations when one endpoint fails, then merge stable identities.
+                let mut items: std::collections::BTreeMap<_, _> = s
+                    .activity
+                    .iter()
+                    .filter(|a| a.account != key || repositories.contains(&a.repository))
+                    .map(|a| ((a.account.clone(), a.id.clone()), a.clone()))
+                    .collect();
+                for item in result.items {
+                    items.insert((item.account.clone(), item.id.clone()), item);
                 }
-            } else if s.activity.is_empty() {
-                SourceState::Unavailable
-            } else {
-                SourceState::Stale
-            };
-            let last = if result.errors.is_empty() {
-                Some(time)
-            } else {
-                s.health.get("github").and_then(|h| h.last_success)
-            };
-            s.health.insert("github".into(),Health{state,last_success:last,retry_at:Some(time+300),malformed:0,deferred:result.deferred as u64,
-                message:if result.errors.is_empty(){format!("{} selected repositories · most recent 40/category · no repositories selected means no network reads",saved.config.repositories.len())}else{result.errors.join("; ")},});
-        });
+                s.activity = items
+                    .into_values()
+                    .filter(|a| a.at >= time - 30 * 86400)
+                    .collect();
+                s.activity.sort_by_key(|a| std::cmp::Reverse(a.at));
+                s.activity
+                    .truncate(500 * (1 + saved.config.sources.accounts.len()));
+                let mine = s.activity.iter().filter(|a| a.account == key).count();
+                let state = if result.errors.is_empty() {
+                    if mine == 0 {
+                        SourceState::Empty
+                    } else {
+                        SourceState::Fresh
+                    }
+                } else if mine == 0 {
+                    SourceState::Unavailable
+                } else {
+                    SourceState::Stale
+                };
+                let last = if result.errors.is_empty() {
+                    Some(time)
+                } else {
+                    s.health.get(&key).and_then(|h| h.last_success)
+                };
+                s.health.insert(key.clone(),Health{state,last_success:last,retry_at:Some(time+300),malformed:0,deferred:result.deferred as u64,
+                    message:if result.errors.is_empty(){format!("{} selected repositories · most recent 40/category · no repositories selected means no network reads",repositories.len())}else{result.errors.join("; ")},});
+            });
+        }
         sleep(&stop, Duration::from_secs(300));
     }
+}
+/// Watches the Codex, progress and event folders recursively, the Claude projects folder only for
+/// new project folders, and each project folder that holds transcripts (never the ~100,000 empty
+/// ones that throwaway working directories leave behind).
+fn transcript_changes(
+    sources: &SourceConfig,
+    root: &std::path::Path,
+    projects: &BTreeSet<PathBuf>,
+) -> Changes {
+    let mut recursive = vec![root.join("events")];
+    if !sources.progress.is_empty() {
+        recursive.push(expand(&sources.progress));
+    }
+    let mut roots = vec![];
+    for (_, kind, home) in sources.assistant_accounts() {
+        if kind == "codex" {
+            recursive.push(expand(&home).join("sessions"));
+        } else {
+            roots.push(expand(&home).join("projects"));
+        }
+    }
+    recursive.extend(projects.iter().cloned());
+    Changes::with(recursive, roots)
 }
 struct Changes {
     paths: Arc<Mutex<BTreeSet<String>>>,
@@ -172,6 +534,10 @@ struct Changes {
 }
 impl Changes {
     fn new(paths: Vec<PathBuf>) -> Self {
+        Self::with(paths, vec![])
+    }
+    /// `shallow` folders are watched without descending (only their direct entries).
+    fn with(paths: Vec<PathBuf>, shallow: Vec<PathBuf>) -> Self {
         let changed = Arc::new(Mutex::new(BTreeSet::new()));
         let discovery = Arc::new(AtomicBool::new(true));
         let failures = Arc::new(Mutex::new(BTreeSet::new()));
@@ -232,8 +598,21 @@ impl Changes {
             }
         };
         if let Some(watcher) = watcher.as_mut() {
-            for path in paths {
-                if let Err(error) = watcher.watch(&path, RecursiveMode::Recursive) {
+            let all = paths
+                .into_iter()
+                .map(|p| (p, RecursiveMode::Recursive))
+                .chain(
+                    shallow
+                        .into_iter()
+                        .map(|p| (p, RecursiveMode::NonRecursive)),
+                );
+            for (path, mode) in all {
+                // A tool that is not installed has no folder to watch: that is not a failure. Later
+                // discovery (every 30 seconds) notices the folder once it exists.
+                if !path.exists() {
+                    continue;
+                }
+                if let Err(error) = watcher.watch(&path, mode) {
                     if let Ok(mut errors) = failures.lock() {
                         if errors.len() < 32 {
                             errors.insert(format!("{}: {error}", path.display()));
@@ -247,6 +626,11 @@ impl Changes {
             discovery,
             failures,
             _watcher: watcher,
+        }
+    }
+    fn absorb(&self, pending: BTreeSet<String>) {
+        if let Ok(mut paths) = self.paths.lock() {
+            paths.extend(pending);
         }
     }
     fn take(&self) -> BTreeSet<String> {
@@ -283,10 +667,9 @@ impl Changes {
     }
 }
 fn private_events_dir(root: &std::path::Path) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
     let directory = root.join("events");
     std::fs::create_dir_all(&directory)?;
-    std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))
+    sq_store::private::private_dir(&directory)
 }
 fn merge_memory(snapshot: &mut Snapshot, items: Vec<MemoryItem>, mut health: Health) {
     if matches!(health.state, SourceState::Unavailable | SourceState::Error) && items.is_empty() {
@@ -303,7 +686,7 @@ fn merge_memory(snapshot: &mut Snapshot, items: Vec<MemoryItem>, mut health: Hea
 fn memory(store: Arc<Store>, snapshot: Arc<RwLock<Snapshot>>, stop: Arc<AtomicBool>) {
     let mut root = PathBuf::new();
     let mut changes = Changes::new(vec![]);
-    let mut last = Instant::now() - Duration::from_secs(60);
+    let mut last: Option<Instant> = None;
     while !stop.load(Ordering::Acquire) {
         let Ok(saved) = store.configuration() else {
             break;
@@ -312,9 +695,9 @@ fn memory(store: Arc<Store>, snapshot: Arc<RwLock<Snapshot>>, stop: Arc<AtomicBo
         if root != next {
             root = next;
             changes = Changes::new(vec![root.join("events")]);
-            last = Instant::now() - Duration::from_secs(60);
+            last = None;
         }
-        if !changes.take().is_empty() || last.elapsed() >= changes.interval() {
+        if !changes.take().is_empty() || last.is_none_or(|t| t.elapsed() >= changes.interval()) {
             let (items, health) = memory_feed(&root, now());
             update(&snapshot, |s| {
                 merge_memory(s, items, health);
@@ -329,7 +712,7 @@ fn memory(store: Arc<Store>, snapshot: Arc<RwLock<Snapshot>>, stop: Arc<AtomicBo
                 }
                 s.health.insert("memory-watch".into(), watch);
             });
-            last = Instant::now();
+            last = Some(Instant::now());
         }
         sleep(&stop, Duration::from_millis(500));
     }
@@ -343,12 +726,12 @@ struct Stamp {
 }
 impl Stamp {
     fn read(path: &std::path::Path) -> std::io::Result<Self> {
-        use std::os::unix::fs::MetadataExt;
-        let metadata = std::fs::metadata(path)?;
+        let file = std::fs::File::open(path)?;
+        let metadata = file.metadata()?;
         Ok(Self {
             modified: metadata.modified().ok(),
             length: metadata.len(),
-            inode: metadata.ino(),
+            inode: file_identity(&file, &metadata),
         })
     }
 }
@@ -446,6 +829,12 @@ impl<T: Observation> Evidence<T> {
                     if self.deferred == 0 && self.unavailable.is_none() {
                         self.entries.retain(|p, _| selected.contains(p));
                     }
+                }
+                // No folder means the tool that writes there is not installed: no evidence, not a fault.
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    self.unavailable = None;
+                    self.deferred = 0;
+                    self.entries.clear();
                 }
                 Err(error) => {
                     self.unavailable = Some(format!("Evidence directory unavailable: {error}"));
@@ -650,7 +1039,9 @@ fn progress(
             .iter_mut()
             .find(|s| s.assistant == "codex" && s.id == value.id)
         {
-            session.progress = Some((value.done, value.total));
+            if session.progress.is_none() {
+                session.progress = Some((value.done, value.total));
+            }
             let proof = proofs
                 .entry((session.assistant.clone(), session.id.clone()))
                 .or_insert(i64::MIN);
@@ -736,6 +1127,9 @@ fn lifecycle(
 fn merge_local(snapshot: &mut Snapshot, local: Snapshot) {
     snapshot.tokens = local.tokens;
     snapshot.sessions = local.sessions;
+    if !local.health.contains_key("progress") {
+        snapshot.health.remove("progress");
+    }
     for (key, health) in local.health {
         if key.ends_with("-logs")
             || ["sessions", "lifecycle", "progress", "local-watch"].contains(&key.as_str())
@@ -832,9 +1226,10 @@ fn local(store: Arc<Store>, snapshot: Arc<RwLock<Snapshot>>, stop: Arc<AtomicBoo
     let mut sources = SourceConfig::default();
     let mut changes = Changes::new(vec![]);
     let mut first = true;
-    let mut last_discovery = Instant::now() - Duration::from_secs(60);
+    let mut watched: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut last_discovery: Option<Instant> = None;
     let mut last_save = Instant::now();
-    let mut last_full = Instant::now() - Duration::from_secs(60);
+    let mut last_full: Option<Instant> = None;
     let mut saved_revision = 0;
     let mut dirty = upgraded;
     let mut progress_cache = Evidence::<Progress>::default();
@@ -849,27 +1244,30 @@ fn local(store: Arc<Store>, snapshot: Arc<RwLock<Snapshot>>, stop: Arc<AtomicBoo
             sources = saved.config.sources;
             // A missing watched directory forces 2-second polling; the collector owns this one.
             let _ = private_events_dir(store.root());
-            changes = Changes::new(vec![
-                expand(&sources.claude).join("projects"),
-                expand(&sources.codex).join("sessions"),
-                expand(&sources.progress),
-                store.root().join("events"),
-            ]);
+            watched = BTreeSet::new();
+            changes = transcript_changes(&sources, store.root(), &watched);
             first = false;
-            last_discovery = Instant::now() - Duration::from_secs(60);
-            last_full = Instant::now() - Duration::from_secs(60);
+            last_discovery = None;
+            last_full = None;
         }
-        let full = last_full.elapsed() >= changes.interval();
+        let full = last_full.is_none_or(|t| t.elapsed() >= changes.interval());
         if full {
-            last_full = Instant::now();
+            last_full = Some(Instant::now());
         }
         let discovery = changes.discovery.swap(false, Ordering::AcqRel)
-            || last_discovery.elapsed() >= changes.interval();
+            || last_discovery.is_none_or(|t| t.elapsed() >= changes.interval());
         let error = if discovery {
-            last_discovery = Instant::now();
+            last_discovery = Some(Instant::now());
             match state.discover(&sources, time) {
                 Ok(count) => {
                     dirty |= count > 0;
+                    if state.watch_dirs != watched {
+                        // Watch only project folders that hold transcripts; keep queued events.
+                        watched = state.watch_dirs.clone();
+                        let pending = changes.take();
+                        changes = transcript_changes(&sources, store.root(), &watched);
+                        changes.absorb(pending);
+                    }
                     None
                 }
                 Err(error) => Some(error),
@@ -883,14 +1281,21 @@ fn local(store: Arc<Store>, snapshot: Arc<RwLock<Snapshot>>, stop: Arc<AtomicBoo
             || discovery
             || state.cursors.values().any(|c| c.deferred > 0);
         if relevant {
-            progress_cache.refresh(
-                &expand(&sources.progress),
-                &changed_paths,
-                full,
-                time,
-                parse_progress,
-                false,
-            );
+            // The progress folder is an optional extra: sessions find their own progress in
+            // their transcripts (SQ-38). A missing folder is not a fault.
+            let extra_progress = !sources.progress.is_empty() && expand(&sources.progress).is_dir();
+            if extra_progress {
+                progress_cache.refresh(
+                    &expand(&sources.progress),
+                    &changed_paths,
+                    full,
+                    time,
+                    parse_progress,
+                    false,
+                );
+            } else {
+                progress_cache = Evidence::<Progress>::default();
+            }
             lifecycle_cache.refresh(
                 &store.root().join("events"),
                 &changed_paths,
@@ -913,13 +1318,15 @@ fn local(store: Arc<Store>, snapshot: Arc<RwLock<Snapshot>>, stop: Arc<AtomicBoo
             let mut proofs = state_times(&local);
             lifecycle(&lifecycle_cache, &mut local, &mut proofs);
             progress(&progress_cache, &mut local, &mut proofs);
+            if !extra_progress {
+                local.health.remove("progress");
+            }
             local.health.insert("sessions".into(),Health{state:if error.is_some(){SourceState::Error}else if local.sessions.is_empty(){SourceState::Empty}else{SourceState::Fresh},message:error.unwrap_or_else(||"Explicit lifecycle/progress evidence; task labels may be unavailable for older sessions".into()),..Health::default()});
             let watch = changes.health();
-            let evidence_health = [
-                lifecycle_cache.health("lifecycle"),
-                progress_cache.health("progress"),
-                watch.clone(),
-            ];
+            let mut evidence_health = vec![lifecycle_cache.health("lifecycle"), watch.clone()];
+            if extra_progress {
+                evidence_health.push(progress_cache.health("progress"));
+            }
             if let Some(health) = local.health.get_mut("sessions") {
                 for evidence in &evidence_health {
                     if matches!(
@@ -962,14 +1369,18 @@ mod tests {
     // REQ SQ-23 SQ-19
     #[test]
     fn owned_events_directory_is_private_and_avoids_polling_fallback() {
-        use std::os::unix::fs::PermissionsExt;
         let root = root("events-dir");
         private_events_dir(&root).unwrap();
-        let mode = std::fs::metadata(root.join("events"))
-            .unwrap()
-            .permissions()
-            .mode();
-        assert_eq!(mode & 0o777, 0o700);
+        // Windows has no mode bits: its per-user profile folders are the protection there.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(root.join("events"))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o700);
+        }
         assert!(!Changes::new(vec![root.join("events")]).fallback());
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -1093,6 +1504,87 @@ mod tests {
         assert_eq!(cache.values().next().unwrap().state, SessionState::Waiting);
         std::fs::remove_dir_all(root).unwrap();
     }
+    // REQ SQ-30: no sampling without a system widget; real samples once one exists.
+    #[test]
+    fn system_worker_samples_only_while_a_system_widget_exists() {
+        let root = root("system");
+        let store = Arc::new(Store::new(root.clone()).unwrap());
+        let snapshot = Arc::new(RwLock::new(Snapshot::default()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let handle = {
+            let (store, snapshot, stop) = (store.clone(), snapshot.clone(), stop.clone());
+            thread::spawn(move || system(store, snapshot, stop))
+        };
+        thread::sleep(Duration::from_millis(1500));
+        assert!(snapshot.read().unwrap().system.is_empty());
+        assert_eq!(
+            snapshot.read().unwrap().revision,
+            0,
+            "idle costs no revision"
+        );
+        let saved = store.configuration().unwrap();
+        let mut config = saved.config;
+        config.add_widget("system", "local");
+        store
+            .configure(saved.revision, ConfigAction::Replace(Box::new(config)))
+            .unwrap();
+        let waited = Instant::now();
+        while snapshot.read().unwrap().system.is_empty()
+            && waited.elapsed() < Duration::from_secs(8)
+        {
+            thread::sleep(Duration::from_millis(100));
+        }
+        stop.store(true, Ordering::Release);
+        handle.join().unwrap();
+        let sample = snapshot.read().unwrap().system[0].clone();
+        assert!(sample.cpu.is_some_and(|c| (0.0..=100.0).contains(&c)));
+        let _ = std::fs::remove_dir_all(root);
+    }
+    // REQ SQ-32: real RAM sample, and a GPU sample that never invents numbers while asleep.
+    #[test]
+    fn ram_and_gpu_workers_sample_real_hardware_without_inventing_gpu_values() {
+        let root = root("ramgpu");
+        let store = Arc::new(Store::new(root.clone()).unwrap());
+        let saved = store.configuration().unwrap();
+        let mut config = saved.config;
+        config.add_widget("ram", "local");
+        config.add_widget("gpu", "local");
+        store
+            .configure(saved.revision, ConfigAction::Replace(Box::new(config)))
+            .unwrap();
+        let snapshot = Arc::new(RwLock::new(Snapshot::default()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let handles: Vec<_> = {
+            let (a, b) = (
+                (store.clone(), snapshot.clone(), stop.clone()),
+                (store.clone(), snapshot.clone(), stop.clone()),
+            );
+            vec![
+                thread::spawn(move || system(a.0, a.1, a.2)),
+                thread::spawn(move || gpu(b.0, b.1, b.2)),
+            ]
+        };
+        let waited = Instant::now();
+        while waited.elapsed() < Duration::from_secs(8) {
+            let current = snapshot.read().unwrap();
+            if !current.system.is_empty() && !current.gpu.is_empty() {
+                break;
+            }
+            drop(current);
+            thread::sleep(Duration::from_millis(100));
+        }
+        stop.store(true, Ordering::Release);
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        let current = snapshot.read().unwrap();
+        let ram = current.system[0].ram.expect("meminfo readable");
+        assert!(ram.total > 0 && ram.used <= ram.total);
+        for sample in current.gpu.iter().filter(|g| g.state != GpuState::Reading) {
+            assert!(sample.util.is_none() && sample.temp.is_none() && sample.clock.is_none());
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
     // REQ SQ-8 SQ-9
     #[test]
     fn cached_child_survives_reconstruction_and_state_evidence_orders_independently_of_unknown_metadata(
@@ -1195,14 +1687,30 @@ mod tests {
     #[test]
     fn watch_failure_exposes_two_second_fallback() {
         let root = root("watch");
+        // A folder that does not exist is a tool that is not installed, not a failure.
         let changes = Changes::new(vec![root.join("absent")]);
-        assert!(changes.fallback());
-        assert_eq!(changes.interval(), Duration::from_secs(2));
-        assert_eq!(changes.health().state, SourceState::Stale);
-        assert!(changes
-            .health()
-            .message
-            .contains("2-second polling fallback"));
+        assert!(!changes.fallback());
+        assert_eq!(changes.interval(), Duration::from_secs(30));
+        // A folder that exists but cannot be watched is a failure and is shown as one.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let locked = root.join("locked");
+            std::fs::create_dir_all(&locked).unwrap();
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+            let unreadable = std::fs::read_dir(&locked).is_err();
+            let changes = Changes::new(vec![locked.clone()]);
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
+            if unreadable {
+                assert!(changes.fallback());
+                assert_eq!(changes.interval(), Duration::from_secs(2));
+                assert_eq!(changes.health().state, SourceState::Stale);
+                assert!(changes
+                    .health()
+                    .message
+                    .contains("2-second polling fallback"));
+            }
+        }
         std::fs::remove_dir_all(root).unwrap();
     }
     // REQ SQ-12 SQ-24
@@ -1304,6 +1812,24 @@ mod tests {
         let saved = std::fs::read_to_string(root.join("snapshot.json")).unwrap();
         assert!(saved.contains("live-session"));
         assert!(!saved.contains("never retain this prompt"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // REQ SQ-36: a tool that is not installed has no evidence folder, and that is not a fault.
+    #[test]
+    fn a_missing_evidence_folder_is_empty_not_unavailable() {
+        let root = root("missing-evidence");
+        let mut evidence: Evidence<Progress> = Evidence::default();
+        evidence.refresh(
+            &root.join("not-installed"),
+            &BTreeSet::new(),
+            true,
+            100,
+            |_| Err("never read".into()),
+            false,
+        );
+        assert!(evidence.unavailable.is_none());
+        assert_eq!(evidence.health("progress").state, SourceState::Empty);
         std::fs::remove_dir_all(root).unwrap();
     }
 }

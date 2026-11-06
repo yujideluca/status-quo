@@ -3,7 +3,7 @@ fn main() {
     let root = std::path::PathBuf::from(std::env::var_os("HOME").unwrap()).join(".claude");
     for (provider, result) in [
         ("claude", sq_sources::fetch_claude(&root, now)),
-        ("codex", sq_sources::fetch_codex(now)),
+        ("codex", sq_sources::fetch_codex(None, now)),
     ] {
         match result {
             Ok(usage) => {

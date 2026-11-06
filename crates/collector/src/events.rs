@@ -1,9 +1,9 @@
 //! Hooks retain only the newest sanitized lifecycle observation per session.
 use fs2::FileExt;
 use sq_sources::LifecycleEvent;
+use sq_store::private::PrivateOpen;
 use std::{
     fs::{self, OpenOptions},
-    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::Path,
 };
 pub fn record_lifecycle(root: &Path, event: &LifecycleEvent) -> Result<bool, String> {
@@ -19,17 +19,16 @@ pub fn record_lifecycle(root: &Path, event: &LifecycleEvent) -> Result<bool, Str
         return Err("Invalid lifecycle observation".into());
     }
     fs::create_dir_all(root).map_err(|e| e.to_string())?;
-    fs::set_permissions(root, fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
+    sq_store::private::private_dir(root).map_err(|e| e.to_string())?;
     let directory = root.join("events");
     fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
-    fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))
-        .map_err(|e| e.to_string())?;
+    sq_store::private::private_dir(&directory).map_err(|e| e.to_string())?;
     let lock = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
-        .mode(0o600)
+        .private(0o600)
         .open(root.join("events.lock"))
         .map_err(|e| e.to_string())?;
     lock.lock_exclusive().map_err(|e| e.to_string())?;

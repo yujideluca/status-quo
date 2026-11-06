@@ -2,11 +2,11 @@
 use fs2::FileExt;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use sq_store::private::PrivateOpen;
 use std::{
     collections::BTreeMap,
     fs::{self, File, OpenOptions},
     io::Write,
-    os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::atomic::{AtomicU64, Ordering},
@@ -30,18 +30,50 @@ const MANAGED: &[&str] = &[
     ".config/autostart/status-quo.desktop",
 ];
 const MANIFEST: &str = ".local/share/status-quo/install.json";
+/// Windows keeps the program with the user's local application data, and starts it at login from
+/// the Startup folder (no service manager, no administrator rights).
+const WINDOWS_MANAGED: &[&str] = &[
+    "AppData/Local/status-quo/bin/status-quo.exe",
+    "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/status-quo.vbs",
+];
+const WINDOWS_MANIFEST: &str = "AppData/Local/status-quo/install.json";
+fn managed() -> &'static [&'static str] {
+    if cfg!(windows) {
+        WINDOWS_MANAGED
+    } else {
+        MANAGED
+    }
+}
+/// A managed path below the home folder with the platform's own separators, so a Windows path
+/// reads `C:\Users\me\AppData\Local\...` instead of mixing `\` and `/`.
+fn under(home: &Path, relative: &str) -> PathBuf {
+    relative
+        .split('/')
+        .fold(home.to_path_buf(), |path, part| path.join(part))
+}
+fn manifest() -> &'static str {
+    if cfg!(windows) {
+        WINDOWS_MANIFEST
+    } else {
+        MANIFEST
+    }
+}
 const MAX_FILE: u64 = 256 * 1024 * 1024;
 static SEQUENCE: AtomicU64 = AtomicU64::new(0);
 fn shell_word(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
+/// The program path as the assistants' hook shells accept it. Unix shells take single quotes.
+/// On Windows the path is double-quoted with forward slashes, which Git Bash and cmd both run.
+fn hook_program(binary: &Path) -> String {
+    if cfg!(windows) {
+        format!("\"{}\"", binary.to_string_lossy().replace('\\', "/"))
+    } else {
+        shell_word(&binary.to_string_lossy())
+    }
+}
 fn hook_command(binary: &Path, provider: &str, event: &str) -> String {
-    format!(
-        "{} hook {} {}",
-        shell_word(&binary.to_string_lossy()),
-        provider,
-        event
-    )
+    format!("{} hook {} {}", hook_program(binary), provider, event)
 }
 pub fn hooks(
     mut value: Value,
@@ -151,16 +183,14 @@ fn write_checked(
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
-            .mode(mode)
+            .private(mode)
             .open(&temporary)
             .map_err(|e| e.to_string())?;
         file.write_all(bytes).map_err(|e| e.to_string())?;
         file.sync_all().map_err(|e| e.to_string())?;
         unchanged(path, expected)?;
         fs::rename(&temporary, path).map_err(|e| e.to_string())?;
-        File::open(parent)
-            .and_then(|f| f.sync_all())
-            .map_err(|e| e.to_string())?;
+        sq_store::private::sync_dir(parent).map_err(|e| e.to_string())?;
         Ok(())
     })();
     if result.is_err() {
@@ -202,11 +232,11 @@ impl Ownership {
         let records = value["files"]
             .as_object()
             .ok_or("Installation manifest has no managed-file fingerprints")?;
-        if records.len() != MANAGED.len() {
+        if records.len() != managed().len() {
             return Err("Installation manifest file list is incompatible; retained".into());
         }
         let mut hashes = BTreeMap::new();
-        for relative in MANAGED {
+        for relative in managed() {
             let list = records
                 .get(*relative)
                 .and_then(Value::as_array)
@@ -249,7 +279,7 @@ fn hook_edits(home: &Path, binary: &Path, enable: bool) -> Result<Vec<Edit>, Str
         (".claude/settings.json", "claude"),
         (".codex/hooks.json", "codex"),
     ] {
-        let path = home.join(relative);
+        let path = under(home, relative);
         let before = read_optional(&path)?;
         if before.is_none() && !enable {
             continue;
@@ -276,7 +306,9 @@ struct InstallLock {
 }
 impl InstallLock {
     fn acquire(home: &Path) -> Result<Self, String> {
-        let directory = home.join(".local/share/status-quo");
+        let directory = under(home, manifest())
+            .parent()
+            .map_or_else(|| home.to_path_buf(), Path::to_path_buf);
         fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
         let path = directory.join("install.lock");
         if fs::symlink_metadata(&path).is_ok_and(|m| !m.is_file() || m.file_type().is_symlink()) {
@@ -287,7 +319,7 @@ impl InstallLock {
             .read(true)
             .create(true)
             .truncate(false)
-            .mode(0o600)
+            .private(0o600)
             .open(path)
             .map_err(|e| e.to_string())?;
         file.try_lock_exclusive()
@@ -302,8 +334,10 @@ impl Drop for InstallLock {
 }
 fn home() -> Result<PathBuf, String> {
     std::env::var_os("HOME")
+        .filter(|h| !h.is_empty())
+        .or_else(|| std::env::var_os("USERPROFILE").filter(|h| !h.is_empty()))
         .map(PathBuf::from)
-        .ok_or_else(|| "HOME unavailable".into())
+        .ok_or_else(|| "HOME and USERPROFILE unavailable".into())
 }
 fn text_path(path: &Path) -> Result<&str, String> {
     let value = path
@@ -325,7 +359,26 @@ fn escaped(path: &Path, unit: bool) -> Result<String, String> {
         value.replace('$', "\\$").replace('`', "\\`")
     })
 }
+/// The files Windows needs: the program and a hidden launcher in the Startup folder. The launcher
+/// is a script because a shortcut cannot be written without COM, and a plain batch file would
+/// flash a console window.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn windows_files(home: &Path, current: &Path) -> Result<Vec<(String, Vec<u8>, u32)>, String> {
+    let binary = under(home, WINDOWS_MANAGED[0]);
+    let program = text_path(&binary)?.replace('"', "\"\"");
+    let bytes = read_optional(current)?.ok_or("Running executable is unavailable")?;
+    let launcher = format!(
+        "' Status Quo managed launcher\r\nCreateObject(\"WScript.Shell\").Run \"\"\"{program}\"\" login\", 0, False\r\n"
+    );
+    Ok(vec![
+        (WINDOWS_MANAGED[0].into(), bytes, 0o755),
+        (WINDOWS_MANAGED[1].into(), launcher.into_bytes(), 0o644),
+    ])
+}
 fn desired_files(home: &Path, current: &Path) -> Result<Vec<(String, Vec<u8>, u32)>, String> {
+    if cfg!(windows) {
+        return windows_files(home, current);
+    }
     let binary = home.join(MANAGED[0]);
     let executable = escaped(&binary, true)?;
     let desktop_executable = escaped(&binary, false)?;
@@ -354,7 +407,7 @@ fn install_at(
 ) -> Result<(), String> {
     text_path(home)?;
     let _lock = InstallLock::acquire(home)?;
-    let manifest_path = home.join(MANIFEST);
+    let manifest_path = under(home, manifest());
     let previous_manifest = read_optional(&manifest_path)?;
     let ownership = previous_manifest
         .as_deref()
@@ -369,7 +422,7 @@ fn install_at(
         hashes: BTreeMap::new(),
     };
     for (relative, after, mode) in files {
-        let path = home.join(&relative);
+        let path = under(home, &relative);
         let before = read_optional(&path)?;
         if let Some(old) = &before {
             if !ownership
@@ -399,11 +452,13 @@ fn install_at(
             mode,
         });
     }
-    let hook_edits = hook_edits(home, &home.join(MANAGED[0]), true)?;
+    let hook_edits = hook_edits(home, &under(home, managed()[0]), true)?;
     // All managed paths and both assistant configurations have passed preflight.
     // A pending manifest makes an interrupted first install/upgrade recoverable.
     let pending_bytes = pending.encode("pending")?;
     write_checked(&manifest_path, &previous_manifest, &pending_bytes, 0o600)?;
+    // Windows cannot replace a program that is running, so stop it first (no-op elsewhere).
+    control(&["stop-all"])?;
     for edit in edits.iter().chain(hook_edits.iter()) {
         if edit.before.as_deref() != Some(edit.after.as_slice()) {
             if let Err(error) = write_checked(&edit.path, &edit.before, &edit.after, edit.mode) {
@@ -427,10 +482,55 @@ pub fn install() -> Result<(), String> {
     let home = home()?;
     let current = std::env::current_exe().map_err(|e| e.to_string())?;
     install_at(&home, &current, &mut systemctl)?;
-    println!("Installed Status Quo to {}. Existing hooks retained. Login startup follows the app configuration.",home.join(MANAGED[0]).display());
+    println!("Installed Status Quo to {}. Existing hooks retained. Login startup follows the app configuration.",under(&home, managed()[0]).display());
     Ok(())
 }
+/// Service control. On Linux this is `systemctl --user`; Windows has no services here, so its
+/// version stops and starts the processes itself.
+#[cfg(windows)]
 pub fn systemctl(args: &[&str]) -> Result<(), String> {
+    match args.first().copied() {
+        Some("stop-all") => {
+            // Every other Status Quo process (collector and panel), never this one.
+            let _ = Command::new("taskkill")
+                .args([
+                    "/F",
+                    "/FI",
+                    &format!("PID ne {}", std::process::id()),
+                    "/IM",
+                    "status-quo.exe",
+                ])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+            Ok(())
+        }
+        Some("start") => start_detached(&[]),
+        _ => Ok(()),
+    }
+}
+/// Start the panel as a background process without a console window (Windows only).
+#[cfg(windows)]
+fn start_detached(args: &[&str]) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    const DETACHED_PROCESS: u32 = 0x0000_0008;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    Command::new(std::env::current_exe().map_err(|e| e.to_string())?)
+        .args(args)
+        .creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("Start Status Quo: {e}"))
+}
+#[cfg(not(windows))]
+pub fn systemctl(args: &[&str]) -> Result<(), String> {
+    if args.first() == Some(&"stop-all") {
+        return Ok(());
+    }
     let status = Command::new("systemctl")
         .arg("--user")
         .args(args)
@@ -481,10 +581,10 @@ fn uninstall_at(
 ) -> Result<(), String> {
     text_path(home)?;
     let _lock = InstallLock::acquire(home)?;
-    let manifest_path = home.join(MANIFEST);
+    let manifest_path = under(home, manifest());
     let Some(manifest) = read_optional(&manifest_path)? else {
-        for relative in MANAGED {
-            if read_optional(&home.join(relative))?.is_some() {
+        for relative in managed() {
+            if read_optional(&under(home, relative))?.is_some() {
                 return Err("No Status Quo installation manifest; existing files retained without assuming ownership".into());
             }
         }
@@ -492,8 +592,8 @@ fn uninstall_at(
     };
     let ownership = Ownership::parse(&manifest)?;
     let mut files = Vec::new();
-    for relative in MANAGED {
-        let path = home.join(relative);
+    for relative in managed() {
+        let path = under(home, relative);
         let bytes = read_optional(&path)?;
         if let Some(bytes) = &bytes {
             if !ownership.permits(relative, bytes) {
@@ -505,7 +605,7 @@ fn uninstall_at(
         }
         files.push((path, bytes));
     }
-    let edits = hook_edits(home, &home.join(MANAGED[0]), false)?;
+    let edits = hook_edits(home, &under(home, managed()[0]), false)?;
     // Preflight every removal and both hook files before service or file mutations.
     let removing = ownership.encode("removing")?;
     write_checked(&manifest_path, &Some(manifest), &removing, 0o600)?;
@@ -514,6 +614,7 @@ fn uninstall_at(
         .filter(|(path, bytes)| bytes.is_some() && path.extension().is_some_and(|e| e == "service"))
         .filter_map(|(path, _)| path.file_name().and_then(|s| s.to_str()))
         .collect();
+    control(&["stop-all"])?;
     if !units.is_empty() {
         let mut args = vec!["stop"];
         args.extend(units);
@@ -634,17 +735,17 @@ mod tests {
         fixture.write(".claude/settings.json", claude);
         fixture.write(".codex/hooks.json", b"malformed");
         assert!(fixture.install().is_err());
-        assert!(!fixture.root.join(MANAGED[0]).exists());
-        assert!(!fixture.root.join(MANIFEST).exists());
+        assert!(!fixture.root.join(managed()[0]).exists());
+        assert!(!under(&fixture.root, manifest()).exists());
         assert_eq!(
             fs::read(fixture.root.join(".claude/settings.json")).unwrap(),
             claude
         );
         fixture.write(".codex/hooks.json", b"{}");
-        fixture.write(MANAGED[4], b"unrelated desktop file");
+        fixture.write(managed().last().unwrap(), b"unrelated desktop file");
         assert!(fixture.install().is_err());
-        assert!(!fixture.root.join(MANAGED[0]).exists());
-        assert!(!fixture.root.join(MANIFEST).exists());
+        assert!(!fixture.root.join(managed()[0]).exists());
+        assert!(!under(&fixture.root, manifest()).exists());
         assert_eq!(
             fs::read(fixture.root.join(".claude/settings.json")).unwrap(),
             claude
@@ -663,17 +764,17 @@ mod tests {
             b"retained saved state",
         );
         fixture.install().unwrap();
-        let first = fs::read(fixture.root.join(MANIFEST)).unwrap();
+        let first = fs::read(under(&fixture.root, manifest())).unwrap();
         fixture.install().unwrap();
-        assert_eq!(first, fs::read(fixture.root.join(MANIFEST)).unwrap());
+        assert_eq!(first, fs::read(under(&fixture.root, manifest())).unwrap());
         fs::write(&fixture.executable, b"updated executable").unwrap();
         fixture.install().unwrap();
         assert_eq!(
-            fs::read(fixture.root.join(MANAGED[0])).unwrap(),
+            fs::read(fixture.root.join(managed()[0])).unwrap(),
             b"updated executable"
         );
         fixture.uninstall().unwrap();
-        for path in MANAGED {
+        for path in managed() {
             assert!(!fixture.root.join(path).exists());
         }
         let settings: Value =
@@ -687,13 +788,13 @@ mod tests {
             fs::read(fixture.root.join(".local/state/status-quo/config.json")).unwrap(),
             b"retained saved state"
         );
-        assert!(!fixture.root.join(MANIFEST).exists());
+        assert!(!under(&fixture.root, manifest()).exists());
         fixture.uninstall().unwrap();
     }
     // REQ SQ-12 SQ-17 SQ-25
     #[test]
     fn replaced_binary_or_late_file_is_retained_without_partial_uninstall() {
-        for relative in [MANAGED[0], MANAGED[4]] {
+        for relative in [managed()[0], *managed().last().unwrap()] {
             let fixture = Fixture::new();
             fixture.install().unwrap();
             let settings = fs::read(fixture.root.join(".claude/settings.json")).unwrap();
@@ -705,7 +806,7 @@ mod tests {
             });
             assert!(result.is_err());
             assert!(!service_called);
-            for path in MANAGED {
+            for path in managed() {
                 assert!(fixture.root.join(path).exists());
             }
             assert_eq!(
@@ -726,8 +827,8 @@ mod tests {
             "simulated user-bus failure".into()
         ))
         .is_err());
-        let manifest: Value = sq_store::read_json(&fixture.root.join(MANIFEST)).unwrap();
-        assert_eq!(manifest["phase"], "pending");
+        let record: Value = sq_store::read_json(&under(&fixture.root, manifest())).unwrap();
+        assert_eq!(record["phase"], "pending");
         fixture.install().unwrap();
         let result = uninstall_at(&fixture.root, &mut |args| {
             if args == ["daemon-reload"] {
@@ -737,9 +838,9 @@ mod tests {
             }
         });
         assert!(result.is_err());
-        assert!(fixture.root.join(MANIFEST).exists());
+        assert!(under(&fixture.root, manifest()).exists());
         fixture.uninstall().unwrap();
-        assert!(!fixture.root.join(MANIFEST).exists());
+        assert!(!under(&fixture.root, manifest()).exists());
     }
     // REQ SQ-12 SQ-17 SQ-25
     #[test]
@@ -761,27 +862,85 @@ mod tests {
     fn manifest_is_validated_and_symlinks_are_retained() {
         let fixture = Fixture::new();
         fixture.write(
-            MANIFEST,
+            manifest(),
             br#"{"application":"Status Quo","version":"0.1.0"}"#,
         );
         assert!(fixture.install().is_err());
-        assert!(!fixture.root.join(MANAGED[0]).exists());
-        fs::remove_file(fixture.root.join(MANIFEST)).unwrap();
-        let target = fixture.root.join("unrelated");
-        fs::write(&target, b"original").unwrap();
-        let destination = fixture.root.join(MANAGED[0]);
-        fs::create_dir_all(destination.parent().unwrap()).unwrap();
-        std::os::unix::fs::symlink(&target, &destination).unwrap();
-        assert!(fixture.install().is_err());
-        assert_eq!(fs::read(&target).unwrap(), b"original");
-        assert!(fs::symlink_metadata(destination)
-            .unwrap()
-            .file_type()
-            .is_symlink());
-        assert!(escaped(Path::new("/tmp/line\nbreak/status-quo"), true).is_err());
-        assert_eq!(
-            escaped(Path::new("/tmp/a$b/status-quo"), true).unwrap(),
-            "/tmp/a$$b/status-quo"
-        );
+        assert!(!fixture.root.join(managed()[0]).exists());
+        fs::remove_file(under(&fixture.root, manifest())).unwrap();
+        // Symbolic links need a privilege on Windows, and `escaped` serves the Unix service files.
+        #[cfg(unix)]
+        {
+            let target = fixture.root.join("unrelated");
+            fs::write(&target, b"original").unwrap();
+            let destination = fixture.root.join(managed()[0]);
+            fs::create_dir_all(destination.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(&target, &destination).unwrap();
+            assert!(fixture.install().is_err());
+            assert_eq!(fs::read(&target).unwrap(), b"original");
+            assert!(fs::symlink_metadata(destination)
+                .unwrap()
+                .file_type()
+                .is_symlink());
+            assert!(escaped(Path::new("/tmp/line\nbreak/status-quo"), true).is_err());
+            assert_eq!(
+                escaped(Path::new("/tmp/a$b/status-quo"), true).unwrap(),
+                "/tmp/a$$b/status-quo"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod windows_tests {
+    use super::*;
+    // REQ SQ-36: the Windows installer writes the program and one hidden Startup launcher.
+    #[test]
+    fn windows_install_files_are_the_program_and_a_hidden_startup_launcher() {
+        let root = std::env::temp_dir().join(format!("sq-win-install-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let exe = root.join("source.exe");
+        fs::write(&exe, b"MZ fixture").unwrap();
+        let home = std::env::temp_dir().join("Users").join("me home");
+        let files = windows_files(&home, &exe).unwrap();
+        let names: Vec<_> = files.iter().map(|(n, ..)| n.as_str()).collect();
+        assert_eq!(names, WINDOWS_MANAGED);
+        assert!(names[0].ends_with(".exe") && names[1].ends_with(".vbs"));
+        assert!(names
+            .iter()
+            .all(|n| !n.starts_with('/') && !n.contains('\\')));
+        assert_eq!(files[0].1, b"MZ fixture");
+        let launcher = String::from_utf8(files[1].1.clone()).unwrap();
+        // Hidden window (0), no waiting (False), the program quoted because the path has a space.
+        assert!(launcher.contains("WScript.Shell"));
+        assert!(launcher.contains(", 0, False"));
+        assert!(launcher.contains("me home"));
+        assert!(launcher.contains(" login"));
+        assert!(launcher.ends_with("\r\n") && !launcher.contains("\n\n"));
+        let _ = fs::remove_dir_all(root);
+    }
+    // REQ SQ-36: hook commands stay one quoted program path plus fixed words, on every platform.
+    #[test]
+    fn hook_commands_quote_the_program_path() {
+        let command = hook_command(Path::new("/opt/my apps/status-quo"), "claude", "Stop");
+        if cfg!(windows) {
+            assert_eq!(command, "\"/opt/my apps/status-quo\" hook claude Stop");
+        } else {
+            assert_eq!(command, "'/opt/my apps/status-quo' hook claude Stop");
+        }
+        let tricky = hook_command(Path::new("/a/it's here/sq"), "codex", "Stop");
+        assert!(tricky.ends_with(" hook codex Stop"));
+    }
+    // REQ SQ-36: both platforms keep their managed paths relative to the user's home folder.
+    #[test]
+    fn managed_paths_are_relative_and_distinct() {
+        for list in [MANAGED, WINDOWS_MANAGED] {
+            let mut seen = std::collections::BTreeSet::new();
+            for path in list {
+                assert!(Path::new(path).is_relative() && seen.insert(*path));
+                assert!(!path.contains(".."));
+            }
+        }
+        assert!(Path::new(WINDOWS_MANIFEST).is_relative());
     }
 }

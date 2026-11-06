@@ -1,7 +1,6 @@
-use crate::LogParser;
+use crate::{file_identity, LogParser};
 use serde::{Deserialize, Serialize};
-use sq_core::TokenLedger;
-use std::os::unix::fs::MetadataExt;
+use sq_core::{account_kind, TokenLedger};
 use std::{
     fs::File,
     io::{BufRead, BufReader, Seek, SeekFrom},
@@ -57,16 +56,16 @@ impl Cursor {
         let file = File::open(path).map_err(|e| format!("Open transcript: {e}"))?;
         let metadata = file.metadata().map_err(|e| e.to_string())?;
         let mut result = Poll::default();
-        if metadata.ino() != self.inode || metadata.len() < self.offset {
+        if file_identity(&file, &metadata) != self.inode || metadata.len() < self.offset {
             result.rotated = self.inode != 0;
             self.offset = 0;
             self.discarding = false;
-            if self.parser.provider == "claude" {
+            if account_kind(&self.parser.provider) == "claude" {
                 let parent = self.parser.parent.clone();
                 self.parser = LogParser::new(&self.parser.provider, &self.parser.session);
                 self.parser.parent = parent;
             }
-            self.inode = metadata.ino();
+            self.inode = file_identity(&file, &metadata);
         }
         if metadata.len() == self.offset {
             self.deferred = 0;
@@ -125,7 +124,11 @@ impl Cursor {
             result.deferred = result.deferred.max(1);
         }
         self.deferred = result.deferred;
-        self.modified = metadata.mtime();
+        self.modified = metadata
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_secs() as i64);
         Ok(result)
     }
 }

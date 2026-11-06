@@ -70,6 +70,9 @@ pub struct Session {
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct Activity {
+    /// GitHub account that saw it: `github`, or `github:work` for an extra login.
+    #[serde(default)]
+    pub account: String,
     pub id: String,
     pub repository: String,
     pub kind: String,
@@ -88,6 +91,53 @@ pub struct MemoryItem {
     pub target: Option<String>,
     pub path: String,
 }
+/// One reading of the machine: CPU busy share (0-100) and package temperature in Celsius.
+/// `None` means the value could not be read, never zero.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SystemSample {
+    pub at: i64,
+    pub cpu: Option<f32>,
+    pub temp: Option<f32>,
+    /// Memory in MiB: used (total minus available), total, swap used, swap total.
+    #[serde(default)]
+    pub ram: Option<RamSample>,
+}
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+pub struct RamSample {
+    pub used: u64,
+    pub total: u64,
+    pub swap_used: u64,
+    pub swap_total: u64,
+}
+/// What is known about one GPU (any vendor). A GPU that has powered itself down is never woken just to
+/// be measured, so `Asleep` carries no values (unknown, not zero).
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+pub enum GpuState {
+    Absent,
+    Asleep,
+    /// Awake for another reason; waiting before reading so that reading cannot keep it awake.
+    Waiting,
+    Reading,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct GpuSample {
+    /// Stable device id (`card1`) and a readable name (`Intel i915 (card1)`).
+    pub id: String,
+    pub name: String,
+    pub at: i64,
+    pub state: GpuState,
+    pub util: Option<f32>,
+    pub vram_used: Option<f32>,
+    pub vram_total: Option<f32>,
+    pub temp: Option<f32>,
+    pub power: Option<f32>,
+    #[serde(default)]
+    pub clock: Option<f32>,
+    /// `util` is the share of time the GPU was awake (Intel: not in its RC6 idle state), not an
+    /// engine-busy figure; unprivileged users cannot read the latter.
+    #[serde(default)]
+    pub awake_share: bool,
+}
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct Snapshot {
     pub revision: u64,
@@ -96,6 +146,10 @@ pub struct Snapshot {
     pub sessions: Vec<Session>,
     pub activity: Vec<Activity>,
     pub memory: Vec<MemoryItem>,
+    #[serde(default)]
+    pub system: Vec<SystemSample>,
+    #[serde(default)]
+    pub gpu: Vec<GpuSample>,
     pub health: BTreeMap<String, Health>,
     pub extensions: BTreeMap<String, serde_json::Value>,
 }

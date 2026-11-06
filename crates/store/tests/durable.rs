@@ -65,3 +65,21 @@ fn corrupt_existing_file_is_retained_and_reported() {
     assert_eq!(fs::read(dir.join("config.json")).unwrap(), b"broken");
     fs::remove_dir_all(dir).unwrap();
 }
+#[test] // SQ-38: the old default progress folder of earlier versions means "not chosen".
+fn legacy_default_progress_folder_is_cleared_on_load_and_other_choices_are_kept() {
+    let dir = root().join("legacy");
+    fs::create_dir_all(&dir).unwrap();
+    for (saved, expected) in [
+        ("~/.local/share/codex-pbar/tasks", ""),
+        ("~/my/progress", "~/my/progress"),
+    ] {
+        let mut config = Config::default();
+        config.sources.progress = saved.into();
+        let text = serde_json::json!({"revision": 3, "config": config}).to_string();
+        fs::write(dir.join("config.json"), text).unwrap();
+        let store = Store::new(dir.clone()).unwrap();
+        let loaded = store.configuration().unwrap();
+        assert_eq!(loaded.config.sources.progress, expected);
+        assert_eq!(loaded.revision, 3);
+    }
+}

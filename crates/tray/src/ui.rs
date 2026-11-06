@@ -1,4 +1,5 @@
 use crate::layout;
+use crate::{join, parent, to_config_path, BrowseTarget, Picker, SharedBrowser};
 use egui::{Color32, RichText, Vec2};
 use sq_contract::*;
 use sq_core::*;
@@ -18,6 +19,11 @@ pub struct Tray {
     pub connected: bool,
     /// Desktop-widget look: no tray background or title, only the widgets and two buttons.
     pub bare: bool,
+    /// Colours of the current wallpaper, reported by the host (SQ-37).
+    pub wallpaper: WallpaperColors,
+    /// File access of the host for the folder navigator; `None` hides the Browse buttons.
+    pub browser: Option<SharedBrowser>,
+    picker: Option<Picker>,
     pub registry: Registry,
     /// Edit-tray mode: the draft layout is edited by dragging borders and widgets.
     pub editing: bool,
@@ -33,6 +39,8 @@ pub struct Tray {
     origin_applied: bool,
     /// Unsnapped rectangle of the border or widget being dragged, so a snap can be left again.
     drag_raw: Option<(String, layout::Edges, egui::Rect)>,
+    /// Lines to highlight while a widget is being dragged, in canvas coordinates.
+    pub guides: Vec<layout::Guide>,
     /// Height available to the flow layout in the last normal frame.
     flow_space: f32,
     /// Height of the header strip in the last frame.
@@ -56,6 +64,9 @@ impl Tray {
             capabilities: String::new(),
             connected: false,
             bare: false,
+            wallpaper: WallpaperColors::Pending,
+            browser: None,
+            picker: None,
             registry: sq_widgets::registry(),
             editing: false,
             edit_cells: Vec::new(),
@@ -64,6 +75,7 @@ impl Tray {
             origin_applied: false,
             origin: Vec2::ZERO,
             drag_raw: None,
+            guides: Vec::new(),
             flow_space: 0.0,
             header_height: 34.0,
             canvas: Vec2::ZERO,
@@ -72,6 +84,21 @@ impl Tray {
             import: String::new(),
             preset_name: String::new(),
         }
+    }
+    /// The theme as drawn: system mode resolved, and the palette taken from the wallpaper when
+    /// the theme follows it and the host has reported its colours. Otherwise the configured
+    /// palette stays in use.
+    pub fn effective_theme(&self, theme: &Theme, system_dark: bool) -> Theme {
+        let mut resolved = resolved_theme(theme, system_dark);
+        if let (true, WallpaperColors::Ready(seed)) = (resolved.follow_wallpaper, &self.wallpaper) {
+            let dark = match resolved.mode {
+                Mode::Dark => true,
+                Mode::Light => false,
+                Mode::System => system_dark,
+            };
+            resolved.palette = Palette::from_wallpaper(seed, dark);
+        }
+        resolved
     }
     pub fn register_style(&mut self, name: &str, factory: StyleFactory) -> Result<(), String> {
         if name.is_empty() || self.styles.contains_key(name) {
@@ -207,7 +234,7 @@ impl Tray {
     pub fn show(&mut self, ctx: &egui::Context, now: i64) -> Vec<Intent> {
         let mut intents = Vec::new();
         let system_dark = ctx.input(|i| i.raw.system_theme != Some(egui::Theme::Light));
-        let theme = resolved_theme(
+        let theme = self.effective_theme(
             self.draft
                 .as_ref()
                 .map(|d| &d.theme)
@@ -356,6 +383,7 @@ impl Tray {
                     if edit_config.is_some() {
                         self.apply_edits(ops);
                         self.edit_cells = cells;
+                        paint_guides(ctx, &self.guides, corner.to_vec2());
                     }
                     return;
                 }
@@ -490,8 +518,13 @@ impl Tray {
             egui::Button::new("+ Add widget")
         };
         egui::menu::menu_custom_button(ui, add_button, |ui| {
+            let sources = self
+                .draft
+                .as_ref()
+                .map_or(&self.config.sources, |d| &d.sources)
+                .clone();
             for descriptor in self.registry.descriptors() {
-                for provider in descriptor.providers {
+                for provider in account_choices(&descriptor.providers, &sources) {
                     if ui
                         .button(format!("{provider} / {}", descriptor.title))
                         .clicked()
@@ -521,8 +554,9 @@ impl Tray {
             return;
         };
         if ops.is_empty() {
-            // The drag ended: forget the unsnapped rectangle.
+            // The drag ended: forget the unsnapped rectangle and the highlighted lines.
             self.drag_raw = None;
+            self.guides.clear();
             return;
         }
         let gap = draft.gap;
@@ -556,6 +590,7 @@ impl Tray {
             let raw = layout::drag_rect(base, edges, delta);
             self.drag_raw = Some((id.clone(), edges, raw));
             let next = layout::snap_rect(raw, edges, &others, gap);
+            self.guides = layout::guides(next, edges, &others, gap);
             w.x = next.min.x;
             w.y = next.min.y;
             w.width = next.width().min(8_000.0);
@@ -606,7 +641,7 @@ impl Tray {
     ) -> Vec<Intent> {
         let mut intents = Vec::new();
         let view = self.registry.view(instance, &self.snapshot, now);
-        let resolved = resolved_theme(
+        let resolved = self.effective_theme(
             instance.theme.as_ref().unwrap_or(&self.config.theme),
             ui.ctx()
                 .input(|i| i.raw.system_theme != Some(egui::Theme::Light)),
@@ -693,16 +728,34 @@ impl Tray {
                             intents.push(Intent::Configure(ConfigAction::Widget(Box::new(widget))));
                         }
                     }
-                    let available = (fit.unwrap_or(instance.height)
-                        - if instance.kind == "tokens" {
-                            100.0
-                        } else {
-                            55.0
-                        })
-                    .max(30.0);
+                    // What is left of the widget after its title and controls, measured rather
+                    // than guessed, so wrapped controls and any font size still fit.
+                    let used = ui.cursor().top() - ui.min_rect().top();
+                    let available = (fit.unwrap_or(instance.height) - 26.0 - used - 4.0).max(30.0);
                     // Tell the content how much room it has, so charts and meters adapt.
                     let room = Vec2::new(ui.available_width(), available);
                     ui.data_mut(|d| d.insert_temp(egui::Id::new("sq-room"), room));
+                    // Charts split what the other lines leave over, so the widget always fits.
+                    let charts = view
+                        .nodes
+                        .iter()
+                        .filter(|n| matches!(n, Node::Chart { .. }))
+                        .count();
+                    if charts > 0 {
+                        let others: f32 = view
+                            .nodes
+                            .iter()
+                            .map(|n| match n {
+                                Node::Chart { compact: true, .. } => 0.0,
+                                Node::Chart { .. } => 44.0,
+                                Node::Meter { .. } => 52.0,
+                                _ => 24.0,
+                            })
+                            .sum();
+                        let share =
+                            ((available - others) / charts as f32 - 6.0).clamp(34.0, 1_200.0);
+                        ui.data_mut(|d| d.insert_temp(egui::Id::new("sq-chart-h"), share));
+                    }
                     egui::ScrollArea::vertical()
                         .id_salt("contents")
                         .auto_shrink([false, fit.is_none()])
@@ -739,11 +792,12 @@ impl Tray {
         let Some(draft) = &mut self.draft else {
             return;
         };
+        let mut browse: Option<(BrowseTarget, String)> = None;
         egui::ScrollArea::vertical()
             .id_salt("customization")
             .show(ui, |ui| {
                 ui.heading("Appearance");
-                theme_controls(ui, &mut draft.theme, &self.styles);
+                theme_controls(ui, &mut draft.theme, &self.styles, &self.wallpaper);
                 ui.add(egui::Slider::new(&mut draft.gap, 0.0..=40.0).text("Space between widgets"));
                 ui.separator();
                 ui.heading("Desktop behavior");
@@ -762,6 +816,7 @@ impl Tray {
                 ui.label(
                     "Each entry is independent. Move, replace, resize, hide or detach it here.",
                 );
+                let sources = draft.sources.clone();
                 let mut remove = None;
                 let mut movement = None;
                 let len = draft.widgets.len();
@@ -797,13 +852,16 @@ impl Tray {
                                         );
                                     }
                                 });
-                            let providers = self
-                                .registry
-                                .descriptors()
-                                .into_iter()
-                                .find(|d| d.kind == widget.kind)
-                                .map(|d| d.providers)
-                                .unwrap_or_default();
+                            let providers = account_choices(
+                                &self
+                                    .registry
+                                    .descriptors()
+                                    .into_iter()
+                                    .find(|d| d.kind == widget.kind)
+                                    .map(|d| d.providers)
+                                    .unwrap_or_default(),
+                                &sources,
+                            );
                             egui::ComboBox::from_id_salt(("provider", &widget.id))
                                 .selected_text(&widget.provider)
                                 .show_ui(ui, |ui| {
@@ -857,7 +915,7 @@ impl Tray {
                                 };
                             }
                             if let Some(theme) = &mut widget.theme {
-                                theme_controls(ui, theme, &self.styles);
+                                theme_controls(ui, theme, &self.styles, &self.wallpaper);
                             }
                         });
                 }
@@ -869,17 +927,103 @@ impl Tray {
                 ui.separator();
                 ui.heading("Sources");
                 ui.label("Paths are read only. Credentials remain with the provider CLI.");
-                for (label, path) in [
-                    ("Claude directory", &mut draft.sources.claude),
-                    ("Codex directory", &mut draft.sources.codex),
-                    ("Workflow memory", &mut draft.sources.memory),
-                    ("Task progress", &mut draft.sources.progress),
+                for (label, target, path) in [
+                    ("Claude folder", BrowseTarget::Claude, &mut draft.sources.claude),
+                    ("Codex folder", BrowseTarget::Codex, &mut draft.sources.codex),
+                    (
+                        "Workflow memory",
+                        BrowseTarget::Memory,
+                        &mut draft.sources.memory,
+                    ),
+                    (
+                        "Extra progress files (optional)",
+                        BrowseTarget::Progress,
+                        &mut draft.sources.progress,
+                    ),
                 ] {
                     ui.horizontal(|ui| {
                         ui.label(label);
                         ui.text_edit_singleline(path);
+                        if self.browser.is_some() && ui.button("Browse…").clicked() {
+                            browse = Some((target, path.clone()));
+                        }
                     });
                 }
+                ui.small(
+                    "Session progress is read from each session itself; the optional folder only adds \
+                     progress files written by other tools.",
+                );
+                ui.separator();
+                ui.heading("More accounts");
+                ui.label(
+                    "Another Claude or Codex sign-in (its home folder) or another GitHub login (its gh \
+                     config folder). Nothing secret is stored here; sign in with the tool itself. \
+                     Widgets pick an account in their own settings.",
+                );
+                let mut gone = None;
+                for (index, account) in draft.sources.accounts.iter_mut().enumerate() {
+                    ui.group(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(account.key());
+                            egui::ComboBox::from_id_salt(("account-kind", index))
+                                .selected_text(account.kind.clone())
+                                .show_ui(ui, |ui| {
+                                    for kind in ["claude", "codex", "github"] {
+                                        ui.selectable_value(&mut account.kind, kind.into(), kind);
+                                    }
+                                });
+                            ui.label("name");
+                            ui.add(egui::TextEdit::singleline(&mut account.id).desired_width(90.0));
+                            if ui.button("Remove account").clicked() {
+                                gone = Some(index);
+                            }
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label(if account.kind == "github" {
+                                "gh config folder (empty = default)"
+                            } else {
+                                "Home folder"
+                            });
+                            ui.text_edit_singleline(&mut account.path);
+                            if self.browser.is_some() && ui.button("Browse…").clicked() {
+                                browse = Some((BrowseTarget::Account(index), account.path.clone()));
+                            }
+                        });
+                        if account.kind == "github" {
+                            ui.label("Repositories (owner/name, one per line)");
+                            let mut repos = account.repositories.join("\n");
+                            if ui.text_edit_multiline(&mut repos).changed() {
+                                account.repositories = repos
+                                    .lines()
+                                    .map(str::trim)
+                                    .filter(|s| !s.is_empty())
+                                    .map(String::from)
+                                    .collect();
+                            }
+                        }
+                    });
+                }
+                if let Some(index) = gone {
+                    draft.sources.accounts.remove(index);
+                }
+                if ui.button("+ Add account").clicked() {
+                    let mut n = 1;
+                    while draft
+                        .sources
+                        .accounts
+                        .iter()
+                        .any(|a| a.kind == "claude" && a.id == format!("account{n}"))
+                    {
+                        n += 1;
+                    }
+                    draft.sources.accounts.push(Account {
+                        id: format!("account{n}"),
+                        kind: "claude".into(),
+                        path: "~/.claude-account".to_string() + &n.to_string(),
+                        ..Account::default()
+                    });
+                }
+                ui.separator();
                 ui.label("Local project roots (one absolute path or ~/ path per line)");
                 let mut roots = draft.sources.project_roots.join("\n");
                 if ui.text_edit_multiline(&mut roots).changed() {
@@ -889,6 +1033,9 @@ impl Tray {
                         .filter(|p| !p.is_empty())
                         .map(String::from)
                         .collect();
+                }
+                if self.browser.is_some() && ui.button("Add a project folder…").clicked() {
+                    browse = Some((BrowseTarget::ProjectRoot, String::new()));
                 }
                 ui.add(
                     egui::Slider::new(&mut draft.sources.poll_seconds, 300..=3600)
@@ -953,6 +1100,122 @@ impl Tray {
                     }
                 }
             });
+        if let (Some((target, setting)), Some(browser)) = (browse, self.browser.clone()) {
+            self.picker = Some(Picker::open(&*browser, target, &setting));
+        }
+        self.picker_window(ui.ctx());
+    }
+    /// The folder navigator: plain words, big buttons, nothing changes until "Use this folder".
+    fn picker_window(&mut self, ctx: &egui::Context) {
+        enum Step {
+            Stay,
+            Go(String),
+            Use,
+            Cancel,
+        }
+        let Some(browser) = self.browser.clone() else {
+            self.picker = None;
+            return;
+        };
+        let Some(picker) = &mut self.picker else {
+            return;
+        };
+        let mut step = Step::Stay;
+        egui::Window::new("Choose a folder")
+            .collapsible(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .default_width(520.0)
+            .show(ctx, |ui| {
+                ui.label(
+                    "Open folders by clicking them, then press “Use this folder”. \
+                     Status Quo only reads what is inside; nothing is changed or sent anywhere.",
+                );
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Home").clicked() {
+                        step = Step::Go(browser.home());
+                    }
+                    if ui
+                        .add_enabled(parent(&picker.current).is_some(), egui::Button::new("Up"))
+                        .clicked()
+                    {
+                        if let Some(up) = parent(&picker.current) {
+                            step = Step::Go(up);
+                        }
+                    }
+                    for root in browser.roots() {
+                        if ui.button(&root).clicked() {
+                            step = Step::Go(root);
+                        }
+                    }
+                });
+                ui.label(RichText::new(&picker.current).strong());
+                ui.separator();
+                egui::ScrollArea::vertical()
+                    .max_height(260.0)
+                    .id_salt("picker-list")
+                    .show(ui, |ui| match &picker.folders {
+                        Err(reason) => {
+                            ui.colored_label(
+                                egui::Color32::LIGHT_RED,
+                                format!("Cannot open this folder: {reason}"),
+                            );
+                        }
+                        Ok(names) if names.is_empty() => {
+                            ui.label("No folders inside. You can still use this one.");
+                        }
+                        Ok(names) => {
+                            for name in names.iter().take(400) {
+                                if ui.button(format!("▸ {name}")).clicked() {
+                                    step = Step::Go(join(&picker.current, name));
+                                }
+                            }
+                            if names.len() > 400 {
+                                ui.label(format!("… and {} more not shown", names.len() - 400));
+                            }
+                        }
+                    });
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button("Use this folder").clicked() {
+                        step = Step::Use;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        step = Step::Cancel;
+                    }
+                });
+            });
+        match step {
+            Step::Stay => {}
+            Step::Go(folder) => picker.go(&*browser, folder),
+            Step::Cancel => self.picker = None,
+            Step::Use => {
+                let chosen = to_config_path(&picker.current, &browser.home());
+                let target = picker.target.clone();
+                self.picker = None;
+                if let Some(draft) = &mut self.draft {
+                    apply_folder(draft, &target, chosen);
+                }
+            }
+        }
+    }
+}
+/// Store a chosen folder in the setting the navigator was opened for.
+pub fn apply_folder(config: &mut Config, target: &BrowseTarget, path: String) {
+    match target {
+        BrowseTarget::Claude => config.sources.claude = path,
+        BrowseTarget::Codex => config.sources.codex = path,
+        BrowseTarget::Memory => config.sources.memory = path,
+        BrowseTarget::Progress => config.sources.progress = path,
+        BrowseTarget::Account(index) => {
+            if let Some(account) = config.sources.accounts.get_mut(*index) {
+                account.path = path;
+            }
+        }
+        BrowseTarget::ProjectRoot => {
+            if !config.sources.project_roots.contains(&path) {
+                config.sources.project_roots.push(path);
+            }
+        }
     }
 }
 /// Compress frozen rectangles vertically so the whole layout fits the space the tray had; a
@@ -979,6 +1242,52 @@ enum EditOp {
     Drag(String, layout::Edges, Vec2),
     Remove(String),
 }
+/// Provider names a widget of a kind can choose: each account kind expands to the default
+/// account and the extra accounts of the configuration; other names stay as they are.
+fn account_choices(providers: &[String], sources: &SourceConfig) -> Vec<String> {
+    let mut result: Vec<String> = Vec::new();
+    for provider in providers {
+        if matches!(provider.as_str(), "claude" | "codex" | "github") {
+            result.extend(sources.account_keys(provider));
+        } else {
+            result.push(provider.clone());
+        }
+    }
+    result
+}
+
+/// Highlight the lines a dragged widget has settled on, above every widget. Edges and centres
+/// are drawn solid, equal sizes as a bar along the matching sides.
+fn paint_guides(ctx: &egui::Context, guides: &[layout::Guide], offset: Vec2) {
+    if guides.is_empty() {
+        return;
+    }
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Foreground,
+        egui::Id::new("sq-guides"),
+    ));
+    for guide in guides {
+        let (color, width) = match guide.kind {
+            layout::GuideKind::Edge => (Color32::from_rgb(255, 64, 160), 1.5),
+            layout::GuideKind::Center => (Color32::from_rgb(64, 200, 255), 1.5),
+            layout::GuideKind::Width | layout::GuideKind::Height => {
+                (Color32::from_rgb(255, 190, 40), 3.0)
+            }
+        };
+        let (a, b) = (guide.from + offset, guide.to + offset);
+        if matches!(guide.kind, layout::GuideKind::Center) {
+            painter.add(egui::Shape::dashed_line(
+                &[a, b],
+                egui::Stroke::new(width, color),
+                6.0,
+                4.0,
+            ));
+        } else {
+            painter.line_segment([a, b], egui::Stroke::new(width, color));
+        }
+    }
+}
+
 /// Edit-mode overlay for one widget on the free canvas: the body moves it, every border and
 /// corner resizes it. Added after the content so it takes the pointer.
 fn edit_handles(
@@ -1170,7 +1479,12 @@ pub fn terminal(theme: &Theme, system_dark: bool) -> egui::Visuals {
     visuals.hyperlink_color = color(theme.palette.accent);
     visuals
 }
-fn theme_controls(ui: &mut egui::Ui, theme: &mut Theme, styles: &BTreeMap<String, StyleFactory>) {
+fn theme_controls(
+    ui: &mut egui::Ui,
+    theme: &mut Theme,
+    styles: &BTreeMap<String, StyleFactory>,
+    wallpaper: &WallpaperColors,
+) {
     ui.horizontal(|ui| {
         ui.label("Mode");
         for mode in [Mode::Dark, Mode::Light, Mode::System] {
@@ -1193,17 +1507,50 @@ fn theme_controls(ui: &mut egui::Ui, theme: &mut Theme, styles: &BTreeMap<String
                 ui.selectable_value(&mut theme.style, name.clone(), name);
             }
         });
+    ui.checkbox(&mut theme.follow_wallpaper, "Follow the wallpaper colours");
+    let following = theme.follow_wallpaper && matches!(wallpaper, WallpaperColors::Ready(_));
+    if theme.follow_wallpaper {
+        match wallpaper {
+            WallpaperColors::Ready(_) => {
+                ui.small("Colours come from the wallpaper for the chosen mode; the palette below is used again when this is off.");
+            }
+            WallpaperColors::Pending => {
+                ui.small("Reading the wallpaper… the palette below is used meanwhile.");
+            }
+            WallpaperColors::Unavailable(why) => {
+                ui.small(format!(
+                    "Wallpaper colours unavailable ({why}): the palette below is used."
+                ));
+            }
+        }
+    }
+    // While following, the swatches show the colours in use, not the stored palette.
+    let mut applied = theme.palette.clone();
+    if let (true, WallpaperColors::Ready(seed)) = (theme.follow_wallpaper, wallpaper) {
+        applied = Palette::from_wallpaper(seed, ui.visuals().dark_mode);
+    }
     egui::Grid::new("palette").num_columns(2).show(ui, |ui| {
-        for (label, rgb) in [
-            ("Background", &mut theme.palette.background),
-            ("Text", &mut theme.palette.text),
-            ("Accent", &mut theme.palette.accent),
-            ("Muted", &mut theme.palette.muted),
-            ("Warning", &mut theme.palette.warning),
-            ("Error", &mut theme.palette.error),
+        for (label, stored, shown) in [
+            (
+                "Background",
+                &mut theme.palette.background,
+                applied.background,
+            ),
+            ("Text", &mut theme.palette.text, applied.text),
+            ("Accent", &mut theme.palette.accent, applied.accent),
+            ("Muted", &mut theme.palette.muted, applied.muted),
+            ("Warning", &mut theme.palette.warning, applied.warning),
+            ("Error", &mut theme.palette.error, applied.error),
         ] {
             ui.label(label);
-            ui.color_edit_button_srgb(rgb);
+            if following {
+                let mut copy = shown;
+                ui.add_enabled_ui(false, |ui| {
+                    ui.color_edit_button_srgb(&mut copy);
+                });
+            } else {
+                ui.color_edit_button_srgb(stored);
+            }
             ui.end_row();
         }
     });
@@ -1287,10 +1634,22 @@ fn render_node(
                     }
                 });
         }
-        Node::Chart { series } => chart(ui, series, theme),
+        Node::Chart {
+            series,
+            unit,
+            scale,
+            compact,
+        } => chart(ui, series, unit, scale, *compact, theme),
     }
 }
-fn chart(ui: &mut egui::Ui, series: &[Series], theme: &Theme) {
+fn chart(
+    ui: &mut egui::Ui,
+    series: &[Series],
+    unit: &str,
+    scale: &ChartScale,
+    compact: bool,
+    theme: &Theme,
+) {
     // The chart takes about half of the widget's room and all of its width.
     let room: Vec2 = ui
         .data(|d| d.get_temp(egui::Id::new("sq-room")))
@@ -1298,7 +1657,9 @@ fn chart(ui: &mut egui::Ui, series: &[Series], theme: &Theme) {
     let (rect, response) = ui.allocate_exact_size(
         Vec2::new(
             ui.available_width().max(60.0),
-            (room.y * 0.55).clamp(48.0, 1_200.0),
+            // Charts share the widget's height; the widget worked out each share.
+            ui.data(|d| d.get_temp(egui::Id::new("sq-chart-h")))
+                .unwrap_or((room.y * 0.55).clamp(48.0, 1_200.0)),
         ),
         egui::Sense::hover(),
     );
@@ -1327,6 +1688,30 @@ fn chart(ui: &mut egui::Ui, series: &[Series], theme: &Theme) {
         .flat_map(|s| s.points.iter())
         .filter_map(|p| p.value)
         .fold(1.0f64, f64::max);
+    let values = series
+        .iter()
+        .flat_map(|s| s.points.iter())
+        .filter_map(|p| p.value);
+    let (low, high) = match scale {
+        ChartScale::FromZero => (0.0, peak),
+        ChartScale::Fixed { min, max } if max > min => (*min, *max),
+        ChartScale::Fixed { .. } => (0.0, peak),
+        ChartScale::Fit { min_span } => {
+            let (lo, hi) = values.fold((f64::MAX, f64::MIN), |(l, h), v| (l.min(v), h.max(v)));
+            if lo > hi {
+                (0.0, *min_span)
+            } else {
+                // Keep a steady value in the middle band instead of stretching it into noise.
+                let span = (hi - lo).max(*min_span);
+                let low = ((lo + hi) / 2.0 - span / 2.0).max(0.0);
+                (low, low + span)
+            }
+        }
+    };
+    let y_of = |value: f64| {
+        rect.bottom()
+            - ((value - low) / (high - low)).clamp(0.0, 1.0) as f32 * (rect.height() - 10.0)
+    };
     painter.line_segment(
         [rect.left_bottom(), rect.right_bottom()],
         egui::Stroke::new(1.0, color(theme.palette.muted)),
@@ -1338,7 +1723,7 @@ fn chart(ui: &mut egui::Ui, series: &[Series], theme: &Theme) {
                 let position = egui::pos2(
                     rect.left()
                         + ((point.at as f64 - min as f64) / time_span) as f32 * rect.width(),
-                    rect.bottom() - (value / peak) as f32 * (rect.height() - 10.0),
+                    y_of(value),
                 );
                 if let Some(old) = previous {
                     painter
@@ -1352,13 +1737,23 @@ fn chart(ui: &mut egui::Ui, series: &[Series], theme: &Theme) {
             }
         }
     }
+    let axis = |value: f64| format!("{value:.0}{}{unit}", if unit.len() > 2 { " " } else { "" });
     painter.text(
         rect.right_top(),
         egui::Align2::RIGHT_TOP,
-        format!("{peak:.0} tokens"),
+        axis(high),
         egui::FontId::monospace(10.0),
         color(theme.palette.muted),
     );
+    if compact {
+        painter.text(
+            rect.right_bottom() - egui::vec2(0.0, 2.0),
+            egui::Align2::RIGHT_BOTTOM,
+            axis(low),
+            egui::FontId::monospace(10.0),
+            color(theme.palette.muted),
+        );
+    }
     let hover_time = response
         .hover_pos()
         .map(|p| {
@@ -1366,9 +1761,11 @@ fn chart(ui: &mut egui::Ui, series: &[Series], theme: &Theme) {
         })
         .unwrap_or(max as f64);
     response.on_hover_ui(|ui| {
-        ui.label(format!(
-            "Peak {peak:.0} tokens per bucket; gaps indicate unknown counters"
-        ));
+        ui.label(if compact {
+            format!("{} · gaps indicate unavailable readings", series[0].label)
+        } else {
+            format!("Peak {peak:.0} {unit} per bucket; gaps indicate unknown counters")
+        });
         for s in series {
             if let Some(point) = s.points.iter().min_by(|a, b| {
                 ((a.at as f64 - hover_time).abs()).total_cmp(&(b.at as f64 - hover_time).abs())
@@ -1385,6 +1782,9 @@ fn chart(ui: &mut egui::Ui, series: &[Series], theme: &Theme) {
             }
         }
     });
+    if compact {
+        return;
+    }
     ui.horizontal_wrapped(|ui| {
         ui.label(
             RichText::new(timestamp_utc(min))

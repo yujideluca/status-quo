@@ -2,7 +2,9 @@
 //!
 //! Widgets, tray and collector never see this module. A backend only decides how
 //! one drawing surface is created, anchored, stacked and reported.
+#[cfg(target_os = "linux")]
 pub mod layer;
+#[cfg(target_os = "linux")]
 pub mod x11;
 
 use sq_core::Layer;
@@ -94,6 +96,12 @@ pub fn select(forced: Option<Backend>, probe: &Probe) -> Selection {
 }
 
 /// Read the real session. Never fails: a missing piece only turns a capability off.
+#[cfg(not(target_os = "linux"))]
+pub fn probe_session() -> Probe {
+    // Windows and macOS have neither layer-shell nor X11: the tray is an ordinary window there.
+    Probe::default()
+}
+#[cfg(target_os = "linux")]
 pub fn probe_session() -> Probe {
     let session = std::env::var("XDG_SESSION_TYPE").unwrap_or_default();
     Probe {
@@ -119,6 +127,7 @@ pub struct Anchor {
 }
 
 /// Parse text such as `top-right`, `left` or `bottom-left`. Unknown words are rejected.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn parse_anchor(text: &str) -> Option<Anchor> {
     let mut anchor = Anchor::default();
     let mut any = false;
@@ -140,6 +149,7 @@ pub fn parse_anchor(text: &str) -> Option<Anchor> {
 
 /// Layer-shell has Background, Bottom, Top and Overlay. "Behind" and "Normal" both map to
 /// Bottom (above wallpaper, below windows); "Above" maps to Top.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn layer_for(layer: Layer) -> LayerPlacement {
     match layer {
         Layer::Behind | Layer::Normal => LayerPlacement::Bottom,
@@ -147,6 +157,7 @@ pub fn layer_for(layer: Layer) -> LayerPlacement {
     }
 }
 
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LayerPlacement {
     Bottom,
@@ -154,6 +165,7 @@ pub enum LayerPlacement {
 }
 
 /// Size the surface asks for, from saved geometry, kept to a sane range.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn surface_size(saved: Option<(f32, f32)>) -> (u32, u32) {
     let (w, h) = saved.unwrap_or((440.0, 900.0));
     (w.clamp(240.0, 1600.0) as u32, h.clamp(160.0, 2400.0) as u32)

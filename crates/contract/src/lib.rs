@@ -29,6 +29,21 @@ pub struct Series {
     pub label: String,
     pub points: Vec<Point>,
 }
+/// Vertical range of a chart. `FromZero` fits the highest value (token counts); `Fixed` is a
+/// known range such as 0-100 percent; `Fit` follows the data but never spans less than `min_span`
+/// (so a steady temperature is not stretched into noise).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub enum ChartScale {
+    #[default]
+    FromZero,
+    Fixed {
+        min: f64,
+        max: f64,
+    },
+    Fit {
+        min_span: f64,
+    },
+}
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum Node {
     Text(String),
@@ -43,6 +58,15 @@ pub enum Node {
     },
     Chart {
         series: Vec<Series>,
+        /// Unit shown on the axis labels and in hover text ("tokens", "%", "°C").
+        #[serde(default)]
+        unit: String,
+        #[serde(default)]
+        scale: ChartScale,
+        /// A small chart that shares the widget's height with other compact charts, without
+        /// the time and legend rows.
+        #[serde(default)]
+        compact: bool,
     },
     Row {
         id: String,

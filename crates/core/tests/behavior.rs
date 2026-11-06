@@ -238,3 +238,121 @@ fn a_widget_added_to_a_free_canvas_lands_visible_with_its_own_rectangle() {
     assert!(added.width > 0.0 && added.x == 0.0 && added.y == 0.0);
     config.validate().unwrap();
 }
+
+fn account(id: &str, kind: &str, path: &str) -> Account {
+    Account {
+        id: id.into(),
+        kind: kind.into(),
+        path: path.into(),
+        ..Account::default()
+    }
+}
+
+// REQ SQ-35
+#[test]
+fn extra_accounts_have_keys_kinds_and_a_strict_identity() {
+    assert_eq!(
+        account("work", "claude", "~/.claude-work").key(),
+        "claude:work"
+    );
+    assert_eq!(account_kind("claude:work"), "claude");
+    assert_eq!(account_kind("github"), "github");
+    let mut config = Config::default();
+    config.sources.accounts = vec![
+        account("work", "claude", "~/.claude-work"),
+        account("team_2", "codex", "/srv/codex-team"),
+        Account {
+            repositories: vec!["o/r".into()],
+            ..account("org", "github", "")
+        },
+    ];
+    config.validate().unwrap();
+    let all = config.sources.assistant_accounts();
+    let keys: Vec<_> = all.iter().map(|(k, ..)| k.as_str()).collect();
+    assert_eq!(keys, ["claude", "codex", "claude:work", "codex:team_2"]);
+    assert_eq!(
+        config.sources.account_keys("claude"),
+        ["claude", "claude:work"]
+    );
+    assert_eq!(
+        config.sources.account_keys("github"),
+        ["github", "github:org"]
+    );
+    for (id, kind, path) in [
+        ("", "claude", "~/x"),
+        ("Work", "claude", "~/x"),
+        ("a b", "claude", "~/x"),
+        ("-x", "claude", "~/x"),
+        ("work", "gitlab", "~/x"),
+        ("work", "claude", "relative/path"),
+        ("work", "claude", ""),
+        (&"a".repeat(33), "claude", "~/x"),
+    ] {
+        let mut bad = Config::default();
+        bad.sources.accounts = vec![account(id, kind, path)];
+        assert!(bad.validate().is_err(), "accepted {id:?} {kind:?} {path:?}");
+    }
+    // The same kind and name twice, repositories on a Claude account, a bad repository.
+    let mut bad = Config::default();
+    bad.sources.accounts = vec![
+        account("work", "claude", "~/a"),
+        account("work", "claude", "~/b"),
+    ];
+    assert!(bad.validate().is_err());
+    bad.sources.accounts = vec![Account {
+        repositories: vec!["o/r".into()],
+        ..account("work", "claude", "~/a")
+    }];
+    assert!(bad.validate().is_err());
+    bad.sources.accounts = vec![Account {
+        repositories: vec!["not a repository".into()],
+        ..account("org", "github", "")
+    }];
+    assert!(bad.validate().is_err());
+    // The same name under another kind is another account.
+    let mut ok = Config::default();
+    ok.sources.accounts = vec![account("x", "claude", "~/a"), account("x", "codex", "~/b")];
+    ok.validate().unwrap();
+    // At most 16 extra accounts.
+    let mut many = Config::default();
+    many.sources.accounts = (0..17)
+        .map(|n| account(&format!("a{n}"), "claude", "~/a"))
+        .collect();
+    assert!(many.validate().is_err());
+}
+
+// REQ SQ-35: configurations written before accounts existed still load, and accounts round-trip.
+#[test]
+fn old_configurations_load_without_accounts_and_accounts_survive_serialization() {
+    let mut value = serde_json::to_value(Config::default()).unwrap();
+    value["sources"].as_object_mut().unwrap().remove("accounts");
+    let old: Config = serde_json::from_value(value).unwrap();
+    assert!(old.sources.accounts.is_empty());
+    old.validate().unwrap();
+    let mut config = Config::default();
+    config.sources.accounts = vec![account("work", "claude", "~/.claude-work")];
+    let again: Config = serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+    assert_eq!(again, config);
+}
+
+// REQ SQ-35 SQ-36: absolute paths of every platform are accepted, relative ones are not.
+#[test]
+fn source_paths_accept_unix_home_windows_drive_and_unc_forms() {
+    for ok in [
+        "/home/me/.claude",
+        "~/.claude",
+        "~\\.claude",
+        "C:\\Users\\me\\.claude",
+        "c:/Users/me/.claude",
+        "\\\\server\\share\\claude",
+    ] {
+        let mut config = Config::default();
+        config.sources.claude = ok.into();
+        config.validate().unwrap_or_else(|e| panic!("{ok}: {e}"));
+    }
+    for bad in ["claude", "./claude", "C:", "C:claude", "..\\x", "\\rooted"] {
+        let mut config = Config::default();
+        config.sources.claude = bad.into();
+        assert!(config.validate().is_err(), "accepted {bad}");
+    }
+}

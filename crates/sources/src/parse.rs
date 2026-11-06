@@ -98,6 +98,155 @@ pub fn codex_usage(value: &Value, now: i64) -> Result<Usage, String> {
         updated_at: Some(now),
     })
 }
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PlanStatus {
+    #[default]
+    Pending,
+    Active,
+    Done,
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct PlanItem {
+    pub id: String,
+    pub label: String,
+    pub status: PlanStatus,
+}
+/// The task list a session keeps for itself, rebuilt from its own transcript: Claude's
+/// `TaskCreate`/`TaskUpdate` and `TodoWrite` tools, Codex's `update_plan` tool. No outside
+/// progress file is needed (SQ-38).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct Plan {
+    pub items: Vec<PlanItem>,
+    /// When the list last changed (transcript time).
+    pub at: i64,
+    next_id: u64,
+    /// Recent tool-call identities, so a line repeated in the transcript counts once.
+    calls: Vec<String>,
+}
+fn plan_status(value: Option<&str>) -> Option<PlanStatus> {
+    match value? {
+        "pending" => Some(PlanStatus::Pending),
+        "in_progress" => Some(PlanStatus::Active),
+        "completed" => Some(PlanStatus::Done),
+        _ => None,
+    }
+}
+fn clean_label(value: Option<&str>) -> String {
+    value
+        .unwrap_or("")
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(160)
+        .collect()
+}
+impl Plan {
+    /// Done and total steps; `None` while the session has no task list. Unknown never becomes 0/0.
+    pub fn progress(&self) -> Option<(u32, u32)> {
+        let total = self.items.len().min(u32::MAX as usize) as u32;
+        (total > 0).then(|| {
+            let done = self
+                .items
+                .iter()
+                .filter(|i| i.status == PlanStatus::Done)
+                .count();
+            (done as u32, total)
+        })
+    }
+    /// Label of the step being worked on, if one is marked active.
+    pub fn current(&self) -> Option<&str> {
+        self.items
+            .iter()
+            .find(|i| i.status == PlanStatus::Active && !i.label.is_empty())
+            .map(|i| i.label.as_str())
+    }
+    fn seen(&mut self, call: &str) -> bool {
+        if self.calls.iter().any(|c| c == call) {
+            return true;
+        }
+        self.calls.push(call.to_string());
+        if self.calls.len() > 64 {
+            self.calls.remove(0);
+        }
+        false
+    }
+    /// One `tool_use` block of a Claude transcript.
+    pub fn claude_tool(&mut self, call: &str, name: &str, input: &Value, at: i64) {
+        match name {
+            "TaskCreate" => {
+                if self.seen(call) {
+                    return;
+                }
+                self.next_id += 1;
+                if self.items.len() < 500 {
+                    self.items.push(PlanItem {
+                        id: self.next_id.to_string(),
+                        label: clean_label(input.get("subject").and_then(Value::as_str)),
+                        status: PlanStatus::Pending,
+                    });
+                }
+            }
+            "TaskUpdate" => {
+                if self.seen(call) {
+                    return;
+                }
+                let Some(id) = input.get("taskId").and_then(Value::as_str) else {
+                    return;
+                };
+                if input.get("status").and_then(Value::as_str) == Some("deleted") {
+                    self.items.retain(|i| i.id != id);
+                } else if let Some(item) = self.items.iter_mut().find(|i| i.id == id) {
+                    if let Some(status) = plan_status(input.get("status").and_then(Value::as_str)) {
+                        item.status = status;
+                    }
+                    if let Some(subject) = input.get("subject").and_then(Value::as_str) {
+                        item.label = clean_label(Some(subject));
+                    }
+                } else {
+                    return;
+                }
+            }
+            "TodoWrite" => {
+                let Some(todos) = input.get("todos").and_then(Value::as_array) else {
+                    return;
+                };
+                self.items = todos
+                    .iter()
+                    .take(500)
+                    .enumerate()
+                    .map(|(n, t)| PlanItem {
+                        id: n.to_string(),
+                        label: clean_label(t.get("content").and_then(Value::as_str)),
+                        status: plan_status(t.get("status").and_then(Value::as_str))
+                            .unwrap_or_default(),
+                    })
+                    .collect();
+            }
+            _ => return,
+        }
+        self.at = at;
+    }
+    /// The arguments of a Codex `update_plan` call: `{"plan":[{"step":…,"status":…}]}`. The
+    /// whole list is replaced each time.
+    pub fn codex_plan(&mut self, arguments: &str, at: i64) {
+        let Ok(value) = serde_json::from_str::<Value>(arguments) else {
+            return;
+        };
+        let Some(plan) = value.get("plan").and_then(Value::as_array) else {
+            return;
+        };
+        self.items = plan
+            .iter()
+            .take(500)
+            .enumerate()
+            .map(|(n, step)| PlanItem {
+                id: n.to_string(),
+                label: clean_label(step.get("step").and_then(Value::as_str)),
+                status: plan_status(step.get("status").and_then(Value::as_str)).unwrap_or_default(),
+            })
+            .collect();
+        self.at = at;
+    }
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LogParser {
     pub provider: String,
@@ -109,6 +258,8 @@ pub struct LogParser {
     pub state: SessionState,
     pub updated_at: i64,
     pub resets: u64,
+    #[serde(default)]
+    pub plan: Plan,
 }
 impl LogParser {
     pub fn new(provider: &str, session: &str) -> Self {
@@ -122,6 +273,7 @@ impl LogParser {
             state: SessionState::Unknown,
             updated_at: 0,
             resets: 0,
+            plan: Plan::default(),
         }
     }
     pub fn ingest(&mut self, value: &Value) -> Result<Option<TokenRecord>, String> {
@@ -129,7 +281,7 @@ impl LogParser {
             self.updated_at = timestamp(ts)?;
         }
         let kind = value.get("type").and_then(Value::as_str).unwrap_or("");
-        if self.provider == "claude" {
+        if account_kind(&self.provider) == "claude" {
             if let Some(cwd) = value.get("cwd").and_then(Value::as_str) {
                 self.project = cwd.into();
             }
@@ -137,6 +289,19 @@ impl LogParser {
                 self.session = id.into();
             }
             if kind == "assistant" {
+                if let Some(blocks) = value.pointer("/message/content").and_then(Value::as_array) {
+                    for block in blocks {
+                        if block.get("type").and_then(Value::as_str) == Some("tool_use") {
+                            if let (Some(id), Some(name), Some(input)) = (
+                                block.get("id").and_then(Value::as_str),
+                                block.get("name").and_then(Value::as_str),
+                                block.get("input"),
+                            ) {
+                                self.plan.claude_tool(id, name, input, self.updated_at);
+                            }
+                        }
+                    }
+                }
                 let Some(usage) = value.pointer("/message/usage") else {
                     return Ok(None);
                 };
@@ -145,8 +310,8 @@ impl LogParser {
                     .and_then(Value::as_str)
                     .ok_or("Claude usage has no message identity")?;
                 return Ok(Some(TokenRecord {
-                    id: format!("claude:{}:{id}", self.session),
-                    provider: "claude".into(),
+                    id: format!("{}:{}:{id}", self.provider, self.session),
+                    provider: self.provider.clone(),
                     at: self.updated_at,
                     input: counter(usage, "input_tokens")?,
                     output: counter(usage, "output_tokens")?,
@@ -168,6 +333,14 @@ impl LogParser {
                     .pointer("/source/subagent/thread_spawn/parent_thread_id")
                     .and_then(Value::as_str)
                     .map(String::from);
+            }
+            if kind == "response_item"
+                && payload.get("type").and_then(Value::as_str) == Some("function_call")
+                && payload.get("name").and_then(Value::as_str) == Some("update_plan")
+            {
+                if let Some(arguments) = payload.get("arguments").and_then(Value::as_str) {
+                    self.plan.codex_plan(arguments, self.updated_at);
+                }
             }
             if kind == "event_msg" {
                 match payload.get("type").and_then(Value::as_str).unwrap_or("") {
@@ -225,7 +398,7 @@ impl LogParser {
                                 current[1],
                                 current[2]
                             ),
-                            provider: "codex".into(),
+                            provider: self.provider.clone(),
                             at: self.updated_at,
                             input: delta[0] - delta[1],
                             output: delta[2],

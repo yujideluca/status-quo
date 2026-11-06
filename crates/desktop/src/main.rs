@@ -1,14 +1,17 @@
-//! KDE-first desktop wrapper. Shared widgets/tray do not import this crate.
+//! Desktop wrapper: Linux (Wayland layer-shell, X11, KDE first) and Windows 10/11 (ordinary window). Shared widgets/tray do not import this crate.
+// A Windows program without a console window; `attach_console` gives it back when a terminal started it.
+#![cfg_attr(windows, windows_subsystem = "windows")]
 mod host;
 mod install;
 mod native;
+mod wallpaper;
 use eframe::egui;
 use fs2::FileExt;
 use sq_collector::{now, state_root, Client, Service};
 use sq_contract::*;
 use sq_core::*;
+use sq_store::private::PrivateOpen;
 use sq_tray::{Intent, Tray};
-use std::os::unix::fs::OpenOptionsExt;
 use std::{
     fs::{self, OpenOptions},
     path::PathBuf,
@@ -21,7 +24,21 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Windows only: print to the terminal that started the program, if there is one.
+#[cfg(windows)]
+fn attach_console() {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn AttachConsole(process: u32) -> i32;
+    }
+    // ATTACH_PARENT_PROCESS
+    unsafe {
+        AttachConsole(u32::MAX);
+    }
+}
 fn main() {
+    #[cfg(windows)]
+    attach_console();
     if let Err(error) = run() {
         eprintln!("Status Quo: {error}");
         std::process::exit(1);
@@ -109,7 +126,7 @@ fn run() -> Result<(), String> {
         .write(true)
         .create(true)
         .truncate(false)
-        .mode(0o600)
+        .private(0o600)
         .open(root.join("panel.lock"))
         .map_err(|e| e.to_string())?;
     if lock.try_lock_exclusive().is_err() {
@@ -140,6 +157,7 @@ fn run() -> Result<(), String> {
         host::select(host::forced_backend(), &host::probe_session())
     };
     eprintln!("Status Quo host: {}", selection.note);
+    #[cfg(target_os = "linux")]
     if selection.backend == host::Backend::LayerShell {
         let saved = config.geometry.get("tray").map(|g| (g.width, g.height));
         let (width, height) = host::surface_size(saved);
@@ -185,43 +203,112 @@ fn run() -> Result<(), String> {
             .with_position([g.x, g.y])
             .with_inner_size([g.width, g.height]);
     }
-    let mut options = eframe::NativeOptions {
-        viewport,
-        renderer: eframe::Renderer::Glow,
-        vsync: true,
-        ..Default::default()
-    };
-    // Framed window on a Wayland session: prefer process-local XWayland, which honors
-    // requested window layers. The X11 desktop backend needs X11 for its hints.
-    if std::env::var_os("DISPLAY").is_some() {
-        options.event_loop_builder = Some(Box::new(|builder| {
-            use winit::platform::x11::EventLoopBuilderExtX11;
-            builder.with_x11();
-        }));
-    }
     let desktop_hints = selection.backend == host::Backend::X11Desktop;
-    eframe::run_native(
-        "Status Quo",
-        options,
-        Box::new(move |cc| {
-            let mut app = App::new(
-                cc.egui_ctx.clone(),
-                *config,
-                revision,
-                screenshot,
-                customize,
-            );
-            app.tray.capabilities = format!("{} {}", selection.note, native::capabilities());
-            app.x11_hints_pending = desktop_hints;
-            app.tray.bare = desktop_hints;
-            Ok(Box::new(app))
-        }),
-    )
-    .map_err(|e| e.to_string())?;
+    // OpenGL is tried first. Some machines have no usable OpenGL 2 (virtual machines, remote
+    // sessions, old drivers); on Windows the same window then opens through DirectX (wgpu).
+    #[cfg(windows)]
+    let renderers = [eframe::Renderer::Glow, eframe::Renderer::Wgpu];
+    #[cfg(not(windows))]
+    let renderers = [eframe::Renderer::Glow];
+    let mut failure = String::new();
+    for renderer in renderers {
+        #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
+        let mut options = eframe::NativeOptions {
+            viewport: viewport.clone(),
+            renderer,
+            vsync: true,
+            ..Default::default()
+        };
+        #[cfg(windows)]
+        if matches!(renderer, eframe::Renderer::Wgpu) {
+            accept_software_adapter(&mut options);
+        }
+        // Framed window on a Wayland session: prefer process-local XWayland, which honors
+        // requested window layers. The X11 desktop backend needs X11 for its hints.
+        #[cfg(target_os = "linux")]
+        if std::env::var_os("DISPLAY").is_some() {
+            options.event_loop_builder = Some(Box::new(|builder| {
+                use winit::platform::x11::EventLoopBuilderExtX11;
+                builder.with_x11();
+            }));
+        }
+        let (config, screenshot, note) =
+            (config.clone(), screenshot.clone(), selection.note.clone());
+        let result = eframe::run_native(
+            "Status Quo",
+            options,
+            Box::new(move |cc| {
+                let mut app = App::new(
+                    cc.egui_ctx.clone(),
+                    *config,
+                    revision,
+                    screenshot,
+                    customize,
+                );
+                app.tray.capabilities = format!("{note} {}", native::capabilities());
+                app.x11_hints_pending = desktop_hints;
+                app.tray.bare = desktop_hints;
+                Ok(Box::new(app))
+            }),
+        );
+        match result {
+            Ok(()) => {
+                failure.clear();
+                break;
+            }
+            Err(error) => {
+                failure = error.to_string();
+                eprintln!("Status Quo: {failure}");
+            }
+        }
+    }
     let _ = FileExt::unlock(&lock);
-    Ok(())
+    if failure.is_empty() {
+        Ok(())
+    } else {
+        Err(failure)
+    }
 }
+/// wgpu normally ignores software adapters. This machine has no OpenGL 2, so a real GPU is
+/// preferred and, failing that, any adapter is accepted, including Windows' built-in software
+/// renderer (WARP): a slow window is better than none.
+#[cfg(windows)]
+fn accept_software_adapter(options: &mut eframe::NativeOptions) {
+    use eframe::{
+        egui_wgpu::{WgpuSetup, WgpuSetupCreateNew},
+        wgpu::DeviceType,
+    };
+    let mut setup = WgpuSetupCreateNew::default();
+    setup.native_adapter_selector = Some(std::sync::Arc::new(|adapters, surface| {
+        for a in adapters {
+            let info = a.get_info();
+            eprintln!(
+                "Status Quo: graphics adapter {} ({:?}, {:?}), can show window: {}",
+                info.name,
+                info.backend,
+                info.device_type,
+                surface.is_none_or(|s| a.is_surface_supported(s))
+            );
+        }
+        eprintln!("Status Quo: {} graphics adapters found", adapters.len());
+        adapters
+            .iter()
+            .filter(|a| surface.is_none_or(|s| a.is_surface_supported(s)))
+            .min_by_key(|a| match a.get_info().device_type {
+                DeviceType::DiscreteGpu => 0,
+                DeviceType::IntegratedGpu => 1,
+                DeviceType::VirtualGpu => 2,
+                DeviceType::Other => 3,
+                DeviceType::Cpu => 4,
+            })
+            .cloned()
+            .ok_or_else(|| "no graphics adapter can show a window".to_string())
+    }));
+    options.wgpu_options.wgpu_setup = WgpuSetup::CreateNew(setup);
+}
+#[cfg(target_os = "linux")]
 struct LayerApp(App);
+#[cfg(target_os = "linux")]
 impl host::layer::Frame for LayerApp {
     fn update(&mut self, ctx: &egui::Context) -> bool {
         self.0.tray.fullscreen_edit = true;
@@ -272,13 +359,19 @@ fn ensure_collector() -> Result<(), String> {
     let log = OpenOptions::new()
         .append(true)
         .create(true)
-        .mode(0o600)
+        .private(0o600)
         .open(root.join("collector.log"))
         .map_err(|e| e.to_string())?;
     {
-        use std::os::unix::process::CommandExt;
         let mut command = Process::new(std::env::current_exe().map_err(|e| e.to_string())?);
-        command.process_group(0);
+        // The collector must outlive this panel and must not show a console window.
+        #[cfg(unix)]
+        std::os::unix::process::CommandExt::process_group(&mut command, 0);
+        #[cfg(windows)]
+        std::os::windows::process::CommandExt::creation_flags(
+            &mut command,
+            0x0000_0008 | 0x0000_0200 | 0x0800_0000, // detached, new process group, no window
+        );
         command
     }
     .arg("collect")
@@ -310,12 +403,15 @@ enum Update {
     Error(String),
     ConfigurationError(String),
     Connected,
+    Wallpaper(WallpaperColors),
 }
 struct App {
     tray: Tray,
     send: mpsc::Sender<Change>,
     receive: mpsc::Receiver<Update>,
     stop: Arc<AtomicBool>,
+    /// Some theme follows the wallpaper, so the watcher thread looks at it.
+    wallpaper_wanted: Arc<AtomicBool>,
     layer: Layer,
     screenshot: Option<PathBuf>,
     capture_sent: bool,
@@ -326,6 +422,7 @@ struct App {
     last_rect: Option<egui::Rect>,
     geometry_changed: Instant,
     x11_hints_pending: bool,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     x11_attempts: u8,
     last_size: Option<egui::Vec2>,
 }
@@ -342,10 +439,22 @@ impl App {
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = stop.clone();
         let worker_ctx = ctx.clone();
-        thread::spawn(move || client_worker(commands, updates, worker_stop, worker_ctx, revision));
+        let worker_updates = updates.clone();
+        thread::spawn(move || {
+            client_worker(commands, worker_updates, worker_stop, worker_ctx, revision)
+        });
+        let wallpaper_wanted = Arc::new(AtomicBool::new(false));
+        {
+            let (updates, ctx) = (updates.clone(), ctx.clone());
+            wallpaper::spawn(wallpaper_wanted.clone(), stop.clone(), move |colors| {
+                let _ = updates.send(Update::Wallpaper(colors));
+                ctx.request_repaint();
+            });
+        }
         let layer = config.layer;
         let mut tray = Tray::new(config);
         tray.capabilities = native::capabilities();
+        tray.browser = Some(std::sync::Arc::new(native::Folders));
         if customize {
             tray.begin_customization();
         }
@@ -354,6 +463,7 @@ impl App {
             send,
             receive,
             stop,
+            wallpaper_wanted,
             layer,
             screenshot,
             capture_sent: false,
@@ -408,32 +518,37 @@ impl eframe::App for App {
         [0.0; 4]
     }
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        if self.x11_hints_pending && self.started.elapsed() >= Duration::from_secs(1) {
-            use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-            let window = frame.window_handle().ok().and_then(|h| match h.as_raw() {
-                RawWindowHandle::Xlib(x) => Some(x.window as u32),
-                RawWindowHandle::Xcb(x) => Some(x.window.get()),
-                _ => None,
-            });
-            match window {
-                Some(window) if host::x11::hints_active(window) => {
-                    self.x11_hints_pending = false;
-                    eprintln!("Status Quo: X11 desktop hints active");
-                }
-                Some(window) if self.x11_attempts < 8 => {
-                    self.x11_attempts += 1;
-                    if let Err(error) = host::x11::apply_desktop_hints(window) {
-                        self.tray.error = Some(error);
+        #[cfg(target_os = "linux")]
+        {
+            if self.x11_hints_pending && self.started.elapsed() >= Duration::from_secs(1) {
+                use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+                let window = frame.window_handle().ok().and_then(|h| match h.as_raw() {
+                    RawWindowHandle::Xlib(x) => Some(x.window as u32),
+                    RawWindowHandle::Xcb(x) => Some(x.window.get()),
+                    _ => None,
+                });
+                match window {
+                    Some(window) if host::x11::hints_active(window) => {
+                        self.x11_hints_pending = false;
+                        eprintln!("Status Quo: X11 desktop hints active");
                     }
-                    ctx.request_repaint_after(Duration::from_millis(700));
-                }
-                _ => {
-                    self.x11_hints_pending = false;
-                    self.tray.error =
-                        Some("The window manager did not accept the desktop hints".into());
+                    Some(window) if self.x11_attempts < 8 => {
+                        self.x11_attempts += 1;
+                        if let Err(error) = host::x11::apply_desktop_hints(window) {
+                            self.tray.error = Some(error);
+                        }
+                        ctx.request_repaint_after(Duration::from_millis(700));
+                    }
+                    _ => {
+                        self.x11_hints_pending = false;
+                        self.tray.error =
+                            Some("The window manager did not accept the desktop hints".into());
+                    }
                 }
             }
         }
+        #[cfg(not(target_os = "linux"))]
+        let _ = frame;
         self.tick(ctx);
     }
 }
@@ -465,12 +580,20 @@ impl App {
                     self.tray.error = Some(error);
                 }
                 Update::ConfigurationError(error) => self.tray.error = Some(error),
+                Update::Wallpaper(colors) => self.tray.wallpaper = colors,
                 Update::Connected => {
                     self.tray.connected = true;
                     self.tray.error = None;
                 }
             }
         }
+        self.wallpaper_wanted.store(
+            [Some(&self.tray.config), self.tray.draft.as_ref()]
+                .into_iter()
+                .flatten()
+                .any(follows_wallpaper),
+            Ordering::Release,
+        );
         if self.layer != self.tray.config.layer {
             self.layer = self.tray.config.layer;
             ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(native::level(
@@ -559,6 +682,13 @@ impl App {
             ctx.request_repaint_after(Duration::from_millis(250));
         }
     }
+}
+fn follows_wallpaper(config: &Config) -> bool {
+    config.theme.follow_wallpaper
+        || config
+            .widgets
+            .iter()
+            .any(|w| w.theme.as_ref().is_some_and(|t| t.follow_wallpaper))
 }
 fn client_worker(
     commands: mpsc::Receiver<Change>,

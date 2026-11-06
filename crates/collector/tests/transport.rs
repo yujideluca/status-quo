@@ -59,11 +59,23 @@ fn transport_rejects_bad_frames_and_preserves_configuration_between_clients() {
             .unwrap(),
         Reply::Unchanged { .. }
     ));
-    use std::{
-        io::{Read, Write},
-        os::unix::net::UnixStream,
+    use std::io::{Read, Write};
+    #[cfg(unix)]
+    let mut stream = std::os::unix::net::UnixStream::connect(&path).unwrap();
+    // Windows: the endpoint file holds the port and the token that every client must send first.
+    #[cfg(not(unix))]
+    let mut stream = {
+        let text = fs::read_to_string(&path).unwrap();
+        let mut lines = text.lines();
+        let port: u16 = lines.next().unwrap().parse().unwrap();
+        let hex = lines.next().unwrap();
+        let token: Vec<u8> = (0..16)
+            .map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).unwrap())
+            .collect();
+        let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        stream.write_all(&token).unwrap();
+        stream
     };
-    let mut stream = UnixStream::connect(&path).unwrap();
     stream
         .write_all(&((MAX_FRAME + 1) as u32).to_be_bytes())
         .unwrap();

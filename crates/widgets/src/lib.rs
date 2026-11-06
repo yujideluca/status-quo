@@ -5,7 +5,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub fn registry() -> Registry {
     let mut registry = Registry::default();
-    for kind in ["quota", "tokens", "sessions", "activity", "memory"] {
+    for kind in [
+        "quota", "tokens", "sessions", "activity", "memory", "system", "ram", "gpu",
+    ] {
         registry
             .register(Box::new(Builtin(kind)))
             .expect("distinct built-in kinds");
@@ -20,6 +22,9 @@ impl Widget for Builtin {
             "tokens" => ("Token history", vec!["claude", "codex"]),
             "sessions" => ("Sessions", vec!["both", "claude", "codex"]),
             "activity" => ("Recent GitHub activity", vec!["github"]),
+            "system" => ("CPU and temperature", vec!["local"]),
+            "ram" => ("Memory (RAM)", vec!["local"]),
+            "gpu" => ("GPU", vec!["local"]),
             _ => ("Workflow memory", vec!["both", "claude", "codex"]),
         };
         Descriptor {
@@ -29,6 +34,27 @@ impl Widget for Builtin {
         }
     }
     fn view(&self, instance: &WidgetInstance, snapshot: &Snapshot, now: i64) -> View {
+        match self.0 {
+            "system" => {
+                return View {
+                    title: "System / CPU and temperature".into(),
+                    nodes: system(snapshot),
+                }
+            }
+            "ram" => {
+                return View {
+                    title: "System / Memory".into(),
+                    nodes: ram(snapshot),
+                }
+            }
+            "gpu" => {
+                return View {
+                    title: "System / GPU".into(),
+                    nodes: gpu(snapshot),
+                }
+            }
+            _ => {}
+        }
         let mut nodes = match self.0 {
             "quota" => quota(instance, snapshot),
             "tokens" => tokens(instance, snapshot, now),
@@ -37,10 +63,17 @@ impl Widget for Builtin {
                 .activity
                 .iter()
                 .filter(|a| {
-                    instance
-                        .options
-                        .get("repository")
-                        .is_none_or(|r| r == &a.repository)
+                    // Records from before accounts existed belong to the default login.
+                    let account = if a.account.is_empty() {
+                        "github"
+                    } else {
+                        a.account.as_str()
+                    };
+                    (instance.provider == "both" || instance.provider == account)
+                        && instance
+                            .options
+                            .get("repository")
+                            .is_none_or(|r| r == &a.repository)
                 })
                 .take(100)
                 .map(|a| Node::Row {
@@ -79,7 +112,13 @@ impl Widget for Builtin {
         let health_key = match self.0 {
             "tokens" => format!("{}-logs", instance.provider),
             "sessions" => "sessions".into(),
-            "activity" => "github".into(),
+            "activity" => {
+                if instance.provider == "both" {
+                    "github".into()
+                } else {
+                    instance.provider.clone()
+                }
+            }
             "memory" => "memory".into(),
             _ => instance.provider.clone(),
         };
@@ -111,6 +150,193 @@ impl Widget for Builtin {
             nodes,
         }
     }
+}
+fn system(snapshot: &Snapshot) -> Vec<Node> {
+    let latest = snapshot.system.last();
+    let series = |label: &str, value: fn(&SystemSample) -> Option<f32>| Series {
+        label: label.into(),
+        points: snapshot
+            .system
+            .iter()
+            .map(|s| Point {
+                at: s.at,
+                value: value(s).map(f64::from),
+            })
+            .collect(),
+    };
+    let now_text = |value: Option<f32>, unit: &str| {
+        value.map_or("Unavailable".to_string(), |v| format!("{v:.0}{unit}"))
+    };
+    let mut nodes = vec![
+        Node::Text(format!("CPU {}", now_text(latest.and_then(|s| s.cpu), "%"))),
+        compact(series("CPU %", |s| s.cpu), "%", PERCENT),
+        Node::Text(format!(
+            "Temperature {}",
+            now_text(latest.and_then(|s| s.temp), " °C")
+        )),
+        compact(
+            series("Temperature °C", |s| s.temp),
+            "°C",
+            ChartScale::Fit { min_span: 20.0 },
+        ),
+    ];
+    if latest.is_none() {
+        nodes.insert(0, Node::Text("Waiting for the first samples".into()));
+    }
+    nodes
+}
+fn compact(series: Series, unit: &str, scale: ChartScale) -> Node {
+    Node::Chart {
+        series: vec![series],
+        unit: unit.into(),
+        scale,
+        compact: true,
+    }
+}
+const PERCENT: ChartScale = ChartScale::Fixed {
+    min: 0.0,
+    max: 100.0,
+};
+fn gib(mib: u64) -> String {
+    format!("{:.1}", mib as f64 / 1024.0)
+}
+fn ram(snapshot: &Snapshot) -> Vec<Node> {
+    let latest = snapshot.system.last().and_then(|s| s.ram);
+    let Some(now) = latest else {
+        return vec![Node::Text("Waiting for the first samples".into())];
+    };
+    let percent = |used: u64, total: u64| (total > 0).then(|| used as f64 / total as f64 * 100.0);
+    let points = snapshot
+        .system
+        .iter()
+        .map(|s| Point {
+            at: s.at,
+            value: s.ram.and_then(|r| percent(r.used, r.total)),
+        })
+        .collect();
+    let mut nodes = vec![
+        Node::Text(format!(
+            "RAM {} of {} GiB used ({:.0}%)",
+            gib(now.used),
+            gib(now.total),
+            percent(now.used, now.total).unwrap_or(0.0)
+        )),
+        compact(
+            Series {
+                label: "RAM used %".into(),
+                points,
+            },
+            "%",
+            PERCENT,
+        ),
+    ];
+    nodes.push(Node::Text(if now.swap_total == 0 {
+        "No swap configured".into()
+    } else {
+        format!(
+            "Swap {} of {} GiB used",
+            gib(now.swap_used),
+            gib(now.swap_total)
+        )
+    }));
+    nodes
+}
+fn gpu(snapshot: &Snapshot) -> Vec<Node> {
+    let mut ids: Vec<&str> = Vec::new();
+    for sample in &snapshot.gpu {
+        if !ids.contains(&sample.id.as_str()) {
+            ids.push(&sample.id);
+        }
+    }
+    if ids.is_empty() {
+        return vec![Node::Text("Waiting for the first samples".into())];
+    }
+    let mut nodes = Vec::new();
+    for id in ids {
+        let history: Vec<&GpuSample> = snapshot.gpu.iter().filter(|s| s.id == id).collect();
+        let latest = history[history.len() - 1];
+        if latest.state == GpuState::Absent {
+            return vec![Node::Notice {
+                tone: Tone::Muted,
+                text: "No GPU found".into(),
+            }];
+        }
+        nodes.push(Node::Text(latest.name.clone()));
+        nodes.push(match latest.state {
+            GpuState::Asleep => Node::Notice {
+                tone: Tone::Muted,
+                text: "Powered down (idle). It is not queried, so it can stay asleep.".into(),
+            },
+            GpuState::Waiting => Node::Notice {
+                tone: Tone::Muted,
+                text: "Awake; measuring starts once something else is using it.".into(),
+            },
+            _ => {
+                let mut parts = Vec::new();
+                if let Some(v) = latest.util {
+                    parts.push(format!(
+                        "{} {v:.0}%",
+                        if latest.awake_share { "Awake" } else { "Load" }
+                    ));
+                }
+                if let Some(v) = latest.clock {
+                    parts.push(format!("{v:.0} MHz"));
+                }
+                if let Some(used) = latest.vram_used {
+                    parts.push(match latest.vram_total {
+                        Some(total) => format!("VRAM {used:.0} of {total:.0} MiB"),
+                        None => format!("VRAM {used:.0} MiB"),
+                    });
+                }
+                if let Some(v) = latest.temp {
+                    parts.push(format!("{v:.0} °C"));
+                }
+                if let Some(v) = latest.power {
+                    parts.push(format!("{v:.0} W"));
+                }
+                Node::Text(if parts.is_empty() {
+                    "No readings available from this GPU".into()
+                } else {
+                    parts.join(" · ")
+                })
+            }
+        });
+        let series = |label: &str, value: fn(&GpuSample) -> Option<f32>| Series {
+            label: label.into(),
+            points: history
+                .iter()
+                .map(|s| Point {
+                    at: s.at,
+                    value: value(s).map(f64::from),
+                })
+                .collect(),
+        };
+        let has = |value: fn(&GpuSample) -> Option<f32>| history.iter().any(|s| value(s).is_some());
+        // A GPU that sleeps keeps its (empty) load chart, so gaps show when it was off.
+        let can_sleep = history.iter().any(|s| s.state != GpuState::Reading);
+        if has(|s| s.util) || can_sleep {
+            let label = if latest.awake_share {
+                "Awake %"
+            } else {
+                "Load %"
+            };
+            nodes.push(compact(series(label, |s| s.util), "%", PERCENT));
+        } else if has(|s| s.clock) {
+            nodes.push(compact(
+                series("Clock MHz", |s| s.clock),
+                "MHz",
+                ChartScale::Fit { min_span: 500.0 },
+            ));
+        }
+        if has(|s| s.temp) {
+            nodes.push(compact(
+                series("Temperature °C", |s| s.temp),
+                "°C",
+                ChartScale::Fit { min_span: 20.0 },
+            ));
+        }
+    }
+    nodes
 }
 fn quota(instance: &WidgetInstance, snapshot: &Snapshot) -> Vec<Node> {
     let usage = snapshot.usage.get(&instance.provider);
@@ -210,7 +436,12 @@ fn tokens(instance: &WidgetInstance, snapshot: &Snapshot, now: i64) -> Vec<Node>
                 .collect(),
         })
         .collect();
-    vec![Node::Chart { series }]
+    vec![Node::Chart {
+        series,
+        unit: "tokens".into(),
+        scale: ChartScale::FromZero,
+        compact: false,
+    }]
 }
 fn account_label(label: &str, minutes: u32) -> bool {
     let label = label.to_ascii_lowercase();

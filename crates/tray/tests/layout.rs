@@ -660,3 +660,535 @@ fn a_full_desktop_editor_places_widgets_left_of_and_above_the_docked_tray() {
         g.x
     );
 }
+
+// REQ SQ-33
+#[test]
+fn system_widget_fits_its_height_and_resizes_on_the_y_axis() {
+    fn lowest_text(height: f32) -> (f32, Vec<String>) {
+        let mut config = Config::default();
+        config.widgets.clear();
+        config.add_widget("system", "local");
+        config.widgets[0].width = 360.0;
+        config.widgets[0].height = height;
+        let mut tray = Tray::new(config);
+        tray.snapshot.system = (0..60)
+            .map(|n| SystemSample {
+                at: n * 5,
+                cpu: Some((n % 40) as f32),
+                temp: Some(50.0 + (n % 7) as f32),
+                ram: None,
+            })
+            .collect();
+        let mut harness = Harness::new();
+        harness.frame(&mut tray, vec![]);
+        let (_, output) = harness.frame(&mut tray, vec![]);
+        fn texts(shape: &egui::Shape, out: &mut Vec<(f32, String)>) {
+            match shape {
+                egui::Shape::Text(t) => out.push((
+                    t.pos.y + t.galley.rect.bottom(),
+                    t.galley.text().to_string(),
+                )),
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| texts(s, out)),
+                _ => {}
+            }
+        }
+        let mut found = vec![];
+        output
+            .shapes
+            .iter()
+            .for_each(|s| texts(&s.shape, &mut found));
+        let names: Vec<String> = found.iter().map(|(_, t)| t.clone()).collect();
+        // Axis labels belong to the charts: "100%" tops the CPU chart, the bottom label is "0%".
+        let bottom = found
+            .iter()
+            .filter(|(_, t)| t == "0%" || t.ends_with("°C") && !t.starts_with("Temperature"))
+            .map(|(y, _)| *y)
+            .fold(0.0, f32::max);
+        // Measured below the widget's own title, which sits 18 pixels under the widget top.
+        let title = found
+            .iter()
+            .find(|(_, t)| t.starts_with("System / "))
+            .map_or(0.0, |(y, _)| *y);
+        (bottom - title, names)
+    }
+    let (small, names) = lowest_text(230.0);
+    assert!(names.iter().any(|t| t.starts_with("CPU ")));
+    assert!(names.iter().any(|t| t.starts_with("Temperature ")));
+    assert!(!names
+        .iter()
+        .any(|t| t.contains("UTC") || t.contains("tokens")));
+    let (large, _) = lowest_text(460.0);
+    assert!(small < 230.0 - 18.0, "charts overflow the widget: {small}");
+    assert!(
+        large > small + 100.0,
+        "charts do not follow the height: {small} -> {large}"
+    );
+}
+
+// REQ SQ-33
+#[test]
+fn every_widget_kind_fits_its_height_and_fills_it() {
+    fn content_bottom(kind: &str, height: f32) -> (f32, f32) {
+        let mut config = Config::default();
+        config.widgets.clear();
+        let provider = if matches!(kind, "quota" | "tokens") {
+            "claude"
+        } else {
+            "local"
+        };
+        config.add_widget(kind, provider);
+        config.widgets[0].width = 360.0;
+        config.widgets[0].height = height;
+        let mut tray = Tray::new(config);
+        // The harness shows the tray at time 0, so the sample data ends there.
+        let now = 0i64;
+        tray.snapshot.usage.insert(
+            "claude".into(),
+            Usage {
+                windows: vec![
+                    QuotaWindow {
+                        minutes: 300,
+                        used: 40.0,
+                        resets_at: Some(now + 3600),
+                        label: "five_hour".into(),
+                    },
+                    QuotaWindow {
+                        minutes: 10080,
+                        used: 70.0,
+                        resets_at: Some(now + 86400),
+                        label: "seven_day".into(),
+                    },
+                ],
+                updated_at: Some(now),
+            },
+        );
+        tray.snapshot.tokens.insert(
+            "claude".into(),
+            (0..20)
+                .map(|n| Bucket {
+                    at: -3600 * 20 + n * 3600,
+                    input: 1000 + n as u64 * 90,
+                    output: 500,
+                    cache_read: Some(300),
+                    cache_write: None,
+                })
+                .collect(),
+        );
+        tray.snapshot.system = (0..60)
+            .map(|n| SystemSample {
+                at: n * 5 - 300,
+                cpu: Some((n % 40) as f32),
+                temp: Some(50.0 + (n % 7) as f32),
+                ram: Some(RamSample {
+                    used: 8_000_000_000 + n as u64,
+                    total: 16_000_000_000,
+                    swap_used: 0,
+                    swap_total: 0,
+                }),
+            })
+            .collect();
+        let mut harness = Harness::new();
+        harness.frame(&mut tray, vec![]);
+        let (_, output) = harness.frame(&mut tray, vec![]);
+        fn texts(shape: &egui::Shape, out: &mut Vec<f32>) {
+            match shape {
+                egui::Shape::Text(t) => out.push(t.pos.y + t.galley.rect.bottom()),
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| texts(s, out)),
+                _ => {}
+            }
+        }
+        let mut found = vec![];
+        output
+            .shapes
+            .iter()
+            .filter(|s| s.clip_rect.height() > 1.0)
+            .for_each(|s| texts(&s.shape, &mut found));
+        let top = tray.header_height;
+        let lowest = found.iter().cloned().fold(0.0, f32::max);
+        let first = found
+            .iter()
+            .cloned()
+            .filter(|y| *y > top)
+            .fold(f32::MAX, f32::min);
+        (first, lowest)
+    }
+    for kind in ["quota", "tokens", "system", "ram"] {
+        for height in [200.0, 320.0, 480.0] {
+            let (first, lowest) = content_bottom(kind, height);
+            // The title sits about 18 pixels below the widget top.
+            let used = lowest - first + 18.0;
+            assert!(used <= height, "{kind} at {height}: content reaches {used}");
+        }
+    }
+    // The token chart grows with the widget instead of keeping a fixed share.
+    let (a, small) = content_bottom("tokens", 240.0);
+    let (b, large) = content_bottom("tokens", 480.0);
+    assert!(
+        large - b > small - a + 80.0,
+        "{} vs {}",
+        small - a,
+        large - b
+    );
+}
+
+impl Harness {
+    /// Press on `from`, drag to `to` and stay there, so the tray can be inspected mid-drag.
+    fn hold(&mut self, tray: &mut Tray, from: egui::Pos2, to: egui::Pos2) -> egui::FullOutput {
+        let press = egui::Event::PointerButton {
+            pos: from,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        };
+        self.frame(tray, vec![egui::Event::PointerMoved(from)]);
+        self.frame(tray, vec![press]);
+        self.frame(tray, vec![egui::Event::PointerMoved(from.lerp(to, 0.5))]);
+        self.frame(tray, vec![egui::Event::PointerMoved(to)]);
+        self.frame(tray, vec![egui::Event::PointerMoved(to)]).1
+    }
+    fn release(&mut self, tray: &mut Tray, at: egui::Pos2) {
+        let up = egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        self.frame(tray, vec![up]);
+        self.frame(tray, vec![]);
+    }
+}
+
+// REQ SQ-34
+#[test]
+fn moving_a_widget_shows_a_centre_line_that_sticks_and_goes_away_on_release() {
+    let mut ui = Harness::new();
+    let mut config = two_widgets(12.0);
+    // Widget 2 below widget 1 and narrower, so only their centres can line up.
+    config.widgets[1].x = 40.0;
+    config.widgets[1].y = 400.0;
+    config.widgets[1].width = 200.0;
+    config.widgets[1].height = 150.0;
+    let mut tray = Tray::new(config);
+    ui.click(&mut tray, "Edit tray");
+    ui.frame(&mut tray, vec![]);
+    let a = ui.cell(&tray, "widget-1");
+    let b = ui.cell(&tray, "widget-2");
+    // Widget 1 is 300 wide at x 0 (centre 150); widget 2 centre is 140. Move widget 2 so its
+    // centre ends 4 px away from widget 1's centre: it must settle exactly on it.
+    // Grab away from the centre, where the Remove button sits.
+    let grab = b.center() + egui::vec2(0.0, 40.0);
+    let target = grab + egui::vec2(150.0 - 140.0 - 4.0, 0.0);
+    let output = ui.hold(&mut tray, grab, target);
+    let w = tray
+        .draft
+        .as_ref()
+        .unwrap()
+        .widget("widget-2")
+        .unwrap()
+        .clone();
+    assert_eq!(w.x + w.width / 2.0, 150.0, "centred on widget 1's axis");
+    assert!(
+        tray.guides
+            .iter()
+            .any(|g| g.kind == GuideKind::Center && g.from.x == 150.0),
+        "centre line reported: {:?}",
+        tray.guides
+    );
+    let _ = a;
+    // The line is really painted, in the centre-line colour.
+    fn painted(shape: &egui::Shape, color: egui::Color32) -> bool {
+        match shape {
+            egui::Shape::LineSegment { stroke, .. } => stroke.color == color,
+            egui::Shape::Vec(v) => v.iter().any(|s| painted(s, color)),
+            _ => false,
+        }
+    }
+    assert!(
+        output
+            .shapes
+            .iter()
+            .any(|s| painted(&s.shape, egui::Color32::from_rgb(64, 200, 255))),
+        "no centre line was drawn"
+    );
+    // Letting go clears the lines and keeps the position.
+    ui.release(&mut tray, target);
+    assert!(tray.guides.is_empty());
+    let after = tray.draft.as_ref().unwrap().widget("widget-2").unwrap();
+    assert_eq!(after.x + after.width / 2.0, 150.0);
+}
+
+// REQ SQ-34
+#[test]
+fn resizing_to_an_equal_width_highlights_both_widgets_and_sticks() {
+    let mut ui = Harness::new();
+    let mut config = two_widgets(12.0);
+    config.widgets[1].x = 0.0;
+    config.widgets[1].y = 400.0;
+    config.widgets[1].width = 250.0;
+    let mut tray = Tray::new(config);
+    ui.click(&mut tray, "Edit tray");
+    ui.frame(&mut tray, vec![]);
+    let b = ui.cell(&tray, "widget-2");
+    // Right border dragged to 5 px short of widget 1's width of 300.
+    let from = egui::pos2(b.right() - 3.0, b.center().y);
+    ui.hold(&mut tray, from, from + egui::vec2(50.0 - 5.0, 0.0));
+    let w = tray.draft.as_ref().unwrap().widget("widget-2").unwrap();
+    assert_eq!(w.width, 300.0);
+    let bars = tray
+        .guides
+        .iter()
+        .filter(|g| g.kind == GuideKind::Width)
+        .count();
+    assert_eq!(bars, 2, "one bar under each widget: {:?}", tray.guides);
+    ui.release(&mut tray, from);
+    assert!(tray.guides.is_empty());
+}
+
+// REQ SQ-34
+#[test]
+fn dragging_far_from_everything_shows_no_lines_and_leaves_a_widget_free() {
+    let mut ui = Harness::new();
+    let mut tray = Tray::new(two_widgets(12.0));
+    ui.click(&mut tray, "Edit tray");
+    ui.frame(&mut tray, vec![]);
+    let b = ui.cell(&tray, "widget-2");
+    let from = b.center() + egui::vec2(0.0, 40.0);
+    ui.hold(&mut tray, from, from + egui::vec2(130.0, 337.0));
+    assert!(tray.guides.is_empty(), "{:?}", tray.guides);
+    ui.release(&mut tray, from);
+}
+
+// REQ SQ-35
+#[test]
+fn the_add_menu_offers_every_account_and_adds_a_widget_for_the_chosen_one() {
+    let mut config = unlocked();
+    config.widgets.clear();
+    config.sources.accounts = vec![
+        Account {
+            id: "work".into(),
+            kind: "claude".into(),
+            path: "~/.claude-work".into(),
+            ..Account::default()
+        },
+        Account {
+            id: "org".into(),
+            kind: "github".into(),
+            ..Account::default()
+        },
+    ];
+    let mut tray = Tray::new(config);
+    let mut ui = Harness::new();
+    ui.click(&mut tray, "+ Add widget");
+    let (_, output) = ui.frame(&mut tray, vec![]);
+    fn labels(shape: &egui::Shape, out: &mut Vec<String>) {
+        match shape {
+            egui::Shape::Text(t) => out.push(t.galley.text().to_string()),
+            egui::Shape::Vec(v) => v.iter().for_each(|s| labels(s, out)),
+            _ => {}
+        }
+    }
+    let mut found = vec![];
+    output
+        .shapes
+        .iter()
+        .for_each(|s| labels(&s.shape, &mut found));
+    for expected in [
+        "claude / Account usage",
+        "claude:work / Account usage",
+        "claude:work / Token history",
+        "github:org / Recent GitHub activity",
+    ] {
+        assert!(
+            found.iter().any(|t| t == expected),
+            "menu lacks {expected}: {found:?}"
+        );
+    }
+    // The codex account was not configured, so no codex:work entry exists.
+    assert!(!found.iter().any(|t| t.starts_with("codex:")));
+    let intents = ui.click(&mut tray, "claude:work / Account usage");
+    assert!(intents.iter().any(|i| matches!(
+        i,
+        Intent::Configure(ConfigAction::Add { provider, .. }) if provider == "claude:work"
+    )));
+}
+
+// REQ SQ-37
+#[test]
+fn theme_follows_the_wallpaper_only_when_asked_and_only_when_it_is_known() {
+    let mut tray = Tray::new(Config::default());
+    let manual = Theme::default();
+    let mut following = Theme {
+        follow_wallpaper: true,
+        ..Theme::default()
+    };
+    let seed = WallpaperSeed {
+        hue: 210.0,
+        chroma: 0.8,
+    };
+    // Not looked at yet, or not found: the configured palette stays.
+    assert_eq!(
+        tray.effective_theme(&following, true).palette,
+        manual.palette
+    );
+    tray.wallpaper = WallpaperColors::Unavailable("no wallpaper".into());
+    assert_eq!(
+        tray.effective_theme(&following, true).palette,
+        manual.palette
+    );
+    // Known: the option follows it, the plain theme does not.
+    tray.wallpaper = WallpaperColors::Ready(seed);
+    assert_eq!(
+        tray.effective_theme(&following, true).palette,
+        Palette::from_wallpaper(&seed, true)
+    );
+    assert_eq!(tray.effective_theme(&manual, true).palette, manual.palette);
+    // The mode picks the look; System follows the desktop.
+    following.mode = Mode::Light;
+    assert_eq!(
+        tray.effective_theme(&following, true).palette,
+        Palette::from_wallpaper(&seed, false)
+    );
+    following.mode = Mode::System;
+    assert_eq!(
+        tray.effective_theme(&following, false).palette,
+        Palette::from_wallpaper(&seed, false)
+    );
+    // Other settings are untouched.
+    assert_eq!(
+        tray.effective_theme(&following, true).opacity,
+        following.opacity
+    );
+}
+
+struct FakeDisk;
+impl FolderBrowser for FakeDisk {
+    fn home(&self) -> String {
+        "/home/ana".into()
+    }
+    fn roots(&self) -> Vec<String> {
+        vec!["/".into()]
+    }
+    fn folders(&self, folder: &str) -> Result<Vec<String>, String> {
+        match folder {
+            "/" => Ok(vec!["home".into()]),
+            "/home" => Ok(vec!["ana".into()]),
+            "/home/ana" => Ok(vec!["dev".into(), ".claude".into()]),
+            "/home/ana/.claude" => Ok(vec![]),
+            _ => Err("No such folder".into()),
+        }
+    }
+}
+
+// REQ SQ-39
+#[test]
+fn path_helpers_handle_unix_and_windows_paths() {
+    assert_eq!(parent("/home/ana/dev").as_deref(), Some("/home/ana"));
+    assert_eq!(parent("/home").as_deref(), Some("/"));
+    assert_eq!(parent("/"), None);
+    assert_eq!(parent("C:\\Users\\ana").as_deref(), Some("C:\\Users"));
+    assert_eq!(parent("C:\\Users").as_deref(), Some("C:\\"));
+    assert_eq!(parent("C:\\"), None);
+    assert_eq!(join("/home", "ana"), "/home/ana");
+    assert_eq!(join("/", "home"), "/home");
+    assert_eq!(join("C:\\", "Users"), "C:\\Users");
+    assert_eq!(join("C:\\Users", "ana"), "C:\\Users\\ana");
+    assert_eq!(to_config_path("/home/ana/dev/x", "/home/ana"), "~/dev/x");
+    assert_eq!(to_config_path("/home/ana", "/home/ana/"), "~");
+    assert_eq!(
+        to_config_path("/home/anabel/x", "/home/ana"),
+        "/home/anabel/x"
+    );
+    assert_eq!(
+        to_config_path("C:\\Users\\ana\\dev", "C:\\Users\\ana"),
+        "~/dev"
+    );
+    assert_eq!(to_config_path("D:\\data", "C:\\Users\\ana"), "D:\\data");
+    assert_eq!(expand_home("~/dev", "/home/ana"), "/home/ana/dev");
+    assert_eq!(expand_home("/abs", "/home/ana"), "/abs");
+}
+
+// REQ SQ-39
+#[test]
+fn navigator_starts_at_the_nearest_readable_folder_and_stores_home_relative_paths() {
+    let disk = FakeDisk;
+    assert_eq!(start_folder(&disk, "~/.claude"), "/home/ana/.claude");
+    // A folder that does not exist yet falls back to its nearest readable parent.
+    assert_eq!(start_folder(&disk, "~/dev/new/deeper"), "/home/ana");
+    assert_eq!(start_folder(&disk, ""), "/home/ana");
+    assert_eq!(start_folder(&disk, "/nowhere/x"), "/");
+    let mut picker = Picker::open(&disk, BrowseTarget::Memory, "~/dev");
+    assert_eq!(picker.current, "/home/ana");
+    assert_eq!(
+        picker.folders.as_ref().unwrap(),
+        &vec!["dev".to_string(), ".claude".into()]
+    );
+    picker.go(&disk, "/nowhere".into());
+    assert_eq!(picker.folders, Err("No such folder".to_string()));
+    let mut config = Config::default();
+    config.sources.accounts.push(Account {
+        id: "work".into(),
+        kind: "claude".into(),
+        ..Account::default()
+    });
+    apply_folder(&mut config, &BrowseTarget::Memory, "~/notes".into());
+    apply_folder(&mut config, &BrowseTarget::Progress, "~/p".into());
+    apply_folder(
+        &mut config,
+        &BrowseTarget::Account(0),
+        "~/.claude-work".into(),
+    );
+    apply_folder(&mut config, &BrowseTarget::Account(7), "~/ignored".into());
+    apply_folder(&mut config, &BrowseTarget::ProjectRoot, "~/code".into());
+    apply_folder(&mut config, &BrowseTarget::ProjectRoot, "~/code".into());
+    assert_eq!(config.sources.memory, "~/notes");
+    assert_eq!(config.sources.progress, "~/p");
+    assert_eq!(config.sources.accounts[0].path, "~/.claude-work");
+    assert_eq!(
+        config
+            .sources
+            .project_roots
+            .iter()
+            .filter(|r| *r == "~/code")
+            .count(),
+        1
+    );
+    config.validate().unwrap();
+}
+
+// REQ SQ-38
+#[test]
+fn an_empty_extra_progress_folder_is_a_valid_configuration() {
+    let mut config = Config::default();
+    assert!(config.sources.progress.is_empty());
+    config.validate().unwrap();
+    config.sources.progress = "relative/path".into();
+    assert!(config.validate().is_err());
+    config.sources.progress = "~/anything".into();
+    config.validate().unwrap();
+}
+
+// REQ SQ-37
+#[test]
+fn customize_swatches_show_the_applied_wallpaper_palette() {
+    let mut tray = Tray::new(Config::default());
+    tray.wallpaper = WallpaperColors::Ready(WallpaperSeed {
+        hue: 244.0,
+        chroma: 0.54,
+    });
+    tray.begin_customization();
+    tray.draft.as_mut().unwrap().theme.follow_wallpaper = true;
+    // The page itself is drawn with the wallpaper accent, so the swatch and the page agree.
+    let drawn = tray.effective_theme(&tray.draft.as_ref().unwrap().theme, true);
+    assert_eq!(
+        drawn.palette.accent,
+        Palette::from_wallpaper(
+            &WallpaperSeed {
+                hue: 244.0,
+                chroma: 0.54
+            },
+            true
+        )
+        .accent
+    );
+    assert_ne!(drawn.palette.accent, Theme::default().palette.accent);
+}

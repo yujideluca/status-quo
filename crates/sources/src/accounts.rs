@@ -58,8 +58,13 @@ impl Drop for ChildGuard {
         let _ = self.0.wait();
     }
 }
-pub fn fetch_codex(now: i64) -> Result<Usage, String> {
-    let child = Command::new("codex")
+/// Codex usage for the default account, or for the one whose home folder is `home`.
+pub fn fetch_codex(home: Option<&Path>, now: i64) -> Result<Usage, String> {
+    let mut command = Command::new(crate::program("codex"));
+    if let Some(home) = home {
+        command.env("CODEX_HOME", home);
+    }
+    let child = command
         .arg("app-server")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -141,9 +146,19 @@ pub fn fetch_codex(now: i64) -> Result<Usage, String> {
 }
 /// Bounded read-only command invocation. Arguments never pass through a shell.
 pub fn command_json(program: &str, args: &[&str], timeout: Duration) -> Result<Value, String> {
+    command_json_env(program, args, &[], timeout)
+}
+/// Like `command_json`, with extra environment variables (the account folders of `gh` and `codex`).
+pub fn command_json_env(
+    program: &str,
+    args: &[&str],
+    env: &[(&str, &std::ffi::OsStr)],
+    timeout: Duration,
+) -> Result<Value, String> {
     let deadline = Instant::now() + timeout;
-    let child = Command::new(program)
+    let child = Command::new(crate::program(program))
         .args(args)
+        .envs(env.iter().copied())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

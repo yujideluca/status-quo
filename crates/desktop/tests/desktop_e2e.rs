@@ -4,6 +4,8 @@
 //! ignored by default. Run it with `tools/ui_e2e.sh` before closing any major tray update; it
 //! writes screenshots and `report.json` to `build/e2e/`. The numbers it expects come from the
 //! manual test recorded in `tests/e2e/manual-baseline.json`.
+// The test drives a Wayland desktop through /dev/uinput, so it exists on Linux only.
+#![cfg(target_os = "linux")]
 use serde_json::{json, Value};
 use std::fs;
 use std::io::Write;

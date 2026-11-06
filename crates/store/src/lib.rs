@@ -2,7 +2,6 @@
 use fs2::FileExt;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sq_core::{Config, ConfigAction};
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::{
     fs::{self, File, OpenOptions},
     io::Write,
@@ -12,6 +11,65 @@ use std::{
         Mutex,
     },
 };
+/// Owner-only files and folders. Unix gets mode bits; on Windows the per-user profile folders
+/// that hold all state are already private to the user, so these are no-ops there.
+pub mod private {
+    use std::{fs::OpenOptions, io, path::Path};
+    pub trait PrivateOpen {
+        /// Create new files with the given Unix mode (ignored where modes do not exist).
+        fn private(&mut self, mode: u32) -> &mut Self;
+    }
+    impl PrivateOpen for OpenOptions {
+        #[cfg(unix)]
+        fn private(&mut self, mode: u32) -> &mut Self {
+            std::os::unix::fs::OpenOptionsExt::mode(self, mode)
+        }
+        #[cfg(not(unix))]
+        fn private(&mut self, _mode: u32) -> &mut Self {
+            self
+        }
+    }
+    /// Make a completed rename durable by flushing its folder. Windows cannot open a folder as a
+    /// file, and NTFS keeps renames in its journal, so there it does nothing.
+    pub fn sync_dir(path: &Path) -> io::Result<()> {
+        #[cfg(unix)]
+        {
+            std::fs::File::open(path).and_then(|f| f.sync_all())
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = path;
+            Ok(())
+        }
+    }
+    /// Make a folder readable by its owner only.
+    pub fn private_dir(path: &Path) -> io::Result<()> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = path;
+            Ok(())
+        }
+    }
+    /// Make a file readable by its owner only.
+    pub fn private_file(path: &Path) -> io::Result<()> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = path;
+            Ok(())
+        }
+    }
+}
+use private::PrivateOpen;
 static SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const MAX_FILE: u64 = 32 * 1024 * 1024;
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -19,6 +77,7 @@ pub struct SavedConfig {
     pub revision: u64,
     pub config: Config,
 }
+const LEGACY_PROGRESS_DEFAULT: &str = "~/.local/share/codex-pbar/tasks";
 pub struct Store {
     root: PathBuf,
     configuration: Mutex<SavedConfig>,
@@ -26,10 +85,15 @@ pub struct Store {
 impl Store {
     pub fn new(root: PathBuf) -> Result<Self, String> {
         fs::create_dir_all(&root).map_err(|e| format!("Create state directory: {e}"))?;
-        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
+        private::private_dir(&root).map_err(|e| e.to_string())?;
         let path = root.join("config.json");
         let configuration = if path.exists() {
-            let saved: SavedConfig = read_json(&path)?;
+            let mut saved: SavedConfig = read_json(&path)?;
+            // Earlier versions defaulted the progress folder to the codex-pbar task files. That
+            // is now an optional extra; the old default means "not chosen" (SQ-38).
+            if saved.config.sources.progress == LEGACY_PROGRESS_DEFAULT {
+                saved.config.sources.progress.clear();
+            }
             saved.config.validate()?;
             saved
         } else {
@@ -108,15 +172,13 @@ pub fn atomic_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
-            .mode(0o600)
+            .private(0o600)
             .open(&temporary)
             .map_err(|e| e.to_string())?;
         file.write_all(&bytes).map_err(|e| e.to_string())?;
         file.sync_all().map_err(|e| e.to_string())?;
         fs::rename(&temporary, path).map_err(|e| e.to_string())?;
-        File::open(parent)
-            .and_then(|f| f.sync_all())
-            .map_err(|e| e.to_string())?;
+        private::sync_dir(parent).map_err(|e| e.to_string())?;
         Ok(())
     })();
     if result.is_err() {
@@ -136,7 +198,7 @@ impl CollectorLock {
             .write(true)
             .create(true)
             .truncate(false)
-            .mode(0o600)
+            .private(0o600)
             .open(root.join("collector.lock"))
             .map_err(|e| e.to_string())?;
         file.try_lock_exclusive()

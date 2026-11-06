@@ -9,14 +9,21 @@ use std::{
 };
 use walkdir::WalkDir;
 
+/// The user's home folder: `HOME`, or `USERPROFILE` where `HOME` does not exist (Windows).
+pub fn home_dir() -> PathBuf {
+    std::env::var_os("HOME")
+        .filter(|h| !h.is_empty())
+        .or_else(|| std::env::var_os("USERPROFILE").filter(|h| !h.is_empty()))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+/// Turns `~`, `~/x` and `~\x` into the home folder; other paths are kept as written.
 pub fn expand(path: &str) -> PathBuf {
     if path == "~" {
-        return std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("."));
+        return home_dir();
     }
-    if let Some(rest) = path.strip_prefix("~/") {
-        return expand("~").join(rest);
+    if let Some(rest) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) {
+        return home_dir().join(rest);
     }
     PathBuf::from(path)
 }
@@ -25,47 +32,85 @@ pub struct LocalState {
     pub version: u32,
     pub ledger: TokenLedger,
     pub cursors: BTreeMap<String, Cursor>,
+    /// Claude project folders that hold recent transcripts, found by the last `discover`. Only
+    /// these are watched: a projects folder can hold ~100,000 empty folders made by throwaway
+    /// working directories, and watching them all exhausts the system's inotify limit.
+    #[serde(skip)]
+    pub watch_dirs: BTreeSet<PathBuf>,
+    /// Keys of the Claude and Codex accounts of the last `discover` (`claude`, `claude:work`).
+    #[serde(skip)]
+    pub accounts: Vec<String>,
 }
+/// Transcripts are at most four levels below the root (`project/session/subagents/file.jsonl`,
+/// `YYYY/MM/DD/file.jsonl`); deeper folders are never read.
+const MAX_DEPTH: usize = 5;
+/// Only transcript candidates count toward the bound; empty folders are skipped, not fatal.
+const MAX_FILES: usize = 100_000;
+const MAX_FOLDERS: usize = 2_000_000;
 impl LocalState {
-    /// Rebuild only derived Codex observations whose old sequence identities could collide.
-    /// Original transcripts and retained Claude observations remain untouched.
+    /// Version 2 rebuilt the derived Codex observations whose old sequence identities could
+    /// collide. Version 3 reads every transcript again from the start, once, so sessions that
+    /// were read before task lists were understood get their progress (SQ-38); Claude token
+    /// records are deduplicated by identity, so they are not counted twice.
     pub fn upgrade(&mut self) -> usize {
-        if self.version >= 2 {
+        if self.version >= 3 {
             return 0;
         }
         let before = self.ledger.records.len();
         self.ledger.records.retain(|_, r| r.provider != "codex");
-        self.cursors.retain(|_, c| c.parser.provider != "codex");
-        self.version = 2;
+        self.cursors.clear();
+        self.version = 3;
         before - self.ledger.records.len()
     }
 
     pub fn discover(&mut self, config: &SourceConfig, now: i64) -> Result<usize, String> {
-        let roots = [
-            expand(&config.claude).join("projects"),
-            expand(&config.codex).join("sessions"),
-        ];
+        self.discover_bounded(config, now, MAX_FILES, MAX_FOLDERS)
+    }
+    /// `discover` with explicit bounds, so a test can prove the rules with a handful of folders
+    /// instead of the 100,000 that make the real bound slow to build on some file systems.
+    pub fn discover_bounded(
+        &mut self,
+        config: &SourceConfig,
+        now: i64,
+        max_files: usize,
+        max_folders: usize,
+    ) -> Result<usize, String> {
+        let accounts = config.assistant_accounts();
+        let folders: Vec<(String, &'static str, PathBuf)> = accounts
+            .iter()
+            .map(|(key, kind, home)| {
+                let leaf = if *kind == "claude" {
+                    "projects"
+                } else {
+                    "sessions"
+                };
+                (key.clone(), *kind, expand(home).join(leaf))
+            })
+            .collect();
+        self.accounts = accounts.into_iter().map(|(key, ..)| key).collect();
+        let roots: Vec<&PathBuf> = folders.iter().map(|(_, _, root)| root).collect();
         self.cursors
             .retain(|path, _| roots.iter().any(|root| Path::new(path).starts_with(root)));
         let mut discovered = 0;
-        for (provider, root) in [
-            ("claude", expand(&config.claude).join("projects")),
-            ("codex", expand(&config.codex).join("sessions")),
-        ] {
+        self.watch_dirs.clear();
+        for (provider, kind, root) in folders {
+            let provider = provider.as_str();
             if !root.exists() {
                 continue;
             }
-            for (visited, entry) in WalkDir::new(&root)
-                .follow_links(false)
-                .into_iter()
-                .enumerate()
-            {
-                if visited > 100_000 {
+            let (mut files, mut folders) = (0usize, 0usize);
+            for entry in WalkDir::new(&root).follow_links(false).max_depth(MAX_DEPTH) {
+                let entry = entry.map_err(|e| format!("Transcript directory unreadable: {e}"))?;
+                if entry.file_type().is_dir() {
+                    folders += 1;
+                } else {
+                    files += 1;
+                }
+                if files > max_files || folders > max_folders {
                     return Err(
                         "Transcript discovery bound reached; remaining files deferred".into(),
                     );
                 }
-                let entry = entry.map_err(|e| format!("Transcript directory unreadable: {e}"))?;
                 if !entry.file_type().is_file()
                     || entry.path().extension().is_none_or(|e| e != "jsonl")
                 {
@@ -81,6 +126,16 @@ impl LocalState {
                 if modified < now - 30 * 86400 {
                     continue;
                 }
+                if kind == "claude" {
+                    if let Some(project) = entry
+                        .path()
+                        .strip_prefix(&root)
+                        .ok()
+                        .and_then(|r| r.components().next())
+                    {
+                        self.watch_dirs.insert(root.join(project));
+                    }
+                }
                 let key = entry.path().to_string_lossy().to_string();
                 if let std::collections::btree_map::Entry::Vacant(slot) = self.cursors.entry(key) {
                     let id = entry
@@ -89,7 +144,7 @@ impl LocalState {
                         .unwrap_or_default()
                         .to_string_lossy();
                     let mut cursor = Cursor::new(provider, &id);
-                    if provider == "claude" {
+                    if kind == "claude" {
                         if let Some(parent) = entry
                             .path()
                             .parent()
@@ -119,7 +174,7 @@ impl LocalState {
     ) -> bool {
         let mut changed = false;
         let mut remaining = 16 * 1024 * 1024u64;
-        let mut errors: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+        let mut errors: BTreeMap<String, Vec<String>> = BTreeMap::new();
         // Small updated files first keeps an old import from starving current sessions.
         let mut keys: Vec<_> = self
             .cursors
@@ -151,36 +206,38 @@ impl LocalState {
                 }
                 Err(_) => {
                     errors
-                        .entry(if cursor.parser.provider == "claude" {
-                            "claude"
-                        } else {
-                            "codex"
-                        })
+                        .entry(cursor.parser.provider.clone())
                         .or_default()
                         .push(key);
                 }
             }
         }
+        let providers: Vec<String> = if self.accounts.is_empty() {
+            vec!["claude".into(), "codex".into()]
+        } else {
+            self.accounts.clone()
+        };
         let removed = self.ledger.prune(now - 30 * 86400);
         changed |= removed > 0;
         self.cursors
             .retain(|_, c| c.modified == 0 || c.modified >= now - 30 * 86400);
         if changed || snapshot.tokens.is_empty() {
-            for provider in ["claude", "codex"] {
+            for provider in &providers {
                 match self
                     .ledger
                     .buckets(provider, now - 30 * 86400, now + 1, 3600)
                 {
                     Ok(buckets) => {
-                        snapshot.tokens.insert(provider.into(), buckets);
+                        snapshot.tokens.insert(provider.clone(), buckets);
                     }
                     Err(error) => {
-                        errors.entry(provider).or_default().push(error);
+                        errors.entry(provider.clone()).or_default().push(error);
                     }
                 }
             }
         }
-        for provider in ["claude", "codex"] {
+        for provider in &providers {
+            let provider = provider.as_str();
             let cursors: Vec<_> = self
                 .cursors
                 .values()
@@ -188,7 +245,7 @@ impl LocalState {
                 .collect();
             let malformed = cursors.iter().map(|c| c.malformed).sum();
             let deferred = cursors.iter().map(|c| c.deferred).sum();
-            let failures = errors.get(provider).map(Vec::len).unwrap_or(0);
+            let failures = errors.get(provider).map_or(0, Vec::len);
             snapshot.health.insert(
                 format!("{provider}-logs"),
                 Health {
@@ -232,12 +289,16 @@ impl LocalState {
                 assistant: p.provider.clone(),
                 project,
                 project_path: p.project.clone(),
-                task: "Task label unavailable".into(),
+                task: p
+                    .plan
+                    .current()
+                    .map(String::from)
+                    .unwrap_or_else(|| "Task label unavailable".into()),
                 state: p.state.clone(),
                 updated_at: p.updated_at,
                 parent: p.parent.clone(),
-                progress: None,
-                children_supported: p.parent.is_some() || p.provider == "codex",
+                progress: p.plan.progress(),
+                children_supported: p.parent.is_some() || account_kind(&p.provider) == "codex",
             };
             if sessions
                 .get(&key)

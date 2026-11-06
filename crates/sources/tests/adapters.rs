@@ -200,3 +200,42 @@ fn provider_process_exit_is_bounded_after_stdout_closes() {
     assert!(start.elapsed() < std::time::Duration::from_millis(500));
     assert!(result.is_err());
 }
+// REQ SQ-31: many empty project folders must not trip the file bound, nor be watched. The bound is
+// lowered to 10 files so 1,100 folders prove what 101,000 did, on file systems where creating that
+// many folders takes minutes (Windows).
+#[test]
+fn discovery_ignores_empty_project_folders_and_watches_only_live_ones() {
+    let root = std::env::temp_dir().join(format!("sq-discover-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let projects = root.join(".claude/projects");
+    for n in 0..1_100 {
+        std::fs::create_dir_all(projects.join(format!("-tmp-tmp{n}"))).unwrap();
+    }
+    let live = projects.join("-home-me-app");
+    std::fs::create_dir_all(&live).unwrap();
+    std::fs::write(live.join("s1.jsonl"), "").unwrap();
+    let config = sq_core::SourceConfig {
+        claude: root.join(".claude").to_string_lossy().into(),
+        codex: root.join(".codex").to_string_lossy().into(),
+        ..Default::default()
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let mut state = LocalState::default();
+    // 1,101 folders against a bound of 10 files: folders are counted apart and never fatal.
+    assert_eq!(state.discover_bounded(&config, now, 10, 5_000), Ok(1));
+    assert_eq!(state.watch_dirs.len(), 1);
+    assert!(state.watch_dirs.contains(&live));
+    // The folder bound itself still protects against runaway trees.
+    let mut state = LocalState::default();
+    assert!(state.discover_bounded(&config, now, 10, 1_000).is_err());
+    // Files are bounded too: eleven transcripts against a bound of ten.
+    for n in 0..11 {
+        std::fs::write(live.join(format!("extra{n}.jsonl")), "").unwrap();
+    }
+    let mut state = LocalState::default();
+    assert!(state.discover_bounded(&config, now, 10, 5_000).is_err());
+    let _ = std::fs::remove_dir_all(&root);
+}

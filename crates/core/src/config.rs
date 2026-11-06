@@ -63,6 +63,8 @@ pub struct Theme {
     pub opacity: f32,
     pub font_size: f32,
     pub compact: bool,
+    /// Build the palette from the wallpaper colours instead of using `palette` (SQ-37).
+    pub follow_wallpaper: bool,
 }
 impl Default for Theme {
     fn default() -> Self {
@@ -73,6 +75,7 @@ impl Default for Theme {
             opacity: 0.85,
             font_size: 14.0,
             compact: false,
+            follow_wallpaper: false,
         }
     }
 }
@@ -111,23 +114,84 @@ pub struct WidgetInstance {
     pub detached: bool,
     pub theme: Option<Theme>,
 }
+/// An extra sign-in beyond the default Claude, Codex and GitHub accounts: another Claude or
+/// Codex home folder, or another `gh` login. Holds no secret, only where the tool keeps its own.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct Account {
+    /// Short name, lower case letters, digits, `-` and `_`; unique within its kind.
+    pub id: String,
+    /// `claude`, `codex` or `github`.
+    pub kind: String,
+    /// Text shown for the account.
+    pub label: String,
+    /// Claude or Codex: the tool's home folder (the one `CLAUDE_CONFIG_DIR` or `CODEX_HOME` names).
+    /// GitHub: the `gh` configuration folder (`GH_CONFIG_DIR`) that holds that login.
+    pub path: String,
+    /// GitHub only: the repositories this account reads.
+    pub repositories: Vec<String>,
+}
+impl Account {
+    /// The name widgets use for this account: `claude:work`. The default accounts are plain
+    /// `claude`, `codex` and `github`.
+    pub fn key(&self) -> String {
+        format!("{}:{}", self.kind, self.id)
+    }
+}
+/// `claude` for `claude:work`; a plain key is its own kind.
+pub fn account_kind(key: &str) -> &str {
+    key.split(':').next().unwrap_or(key)
+}
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct SourceConfig {
     pub claude: String,
     pub codex: String,
+    /// Further accounts, each read by its own worker and shown by widgets that choose it.
+    pub accounts: Vec<Account>,
     pub memory: String,
+    /// Optional extra folder of progress files (the `codex-pbar` format). Empty or missing is
+    /// fine: sessions get their progress from their own transcripts.
     pub progress: String,
     pub project_roots: Vec<String>,
     pub poll_seconds: u64,
+}
+impl SourceConfig {
+    /// Every Claude and Codex account as (key, kind, home folder): the two defaults first.
+    pub fn assistant_accounts(&self) -> Vec<(String, &'static str, String)> {
+        let mut result = vec![
+            ("claude".to_string(), "claude", self.claude.clone()),
+            ("codex".to_string(), "codex", self.codex.clone()),
+        ];
+        for a in &self.accounts {
+            match a.kind.as_str() {
+                "claude" => result.push((a.key(), "claude", a.path.clone())),
+                "codex" => result.push((a.key(), "codex", a.path.clone())),
+                _ => {}
+            }
+        }
+        result
+    }
+    /// The keys widgets can choose for a kind of account: the default first, then the extras.
+    pub fn account_keys(&self, kind: &str) -> Vec<String> {
+        std::iter::once(kind.to_string())
+            .chain(
+                self.accounts
+                    .iter()
+                    .filter(|a| a.kind == kind)
+                    .map(Account::key),
+            )
+            .collect()
+    }
 }
 impl Default for SourceConfig {
     fn default() -> Self {
         Self {
             claude: "~/.claude".into(),
             codex: "~/.codex".into(),
+            accounts: vec![],
             memory: "~/dev/workflow-memory".into(),
-            progress: "~/.local/share/codex-pbar/tasks".into(),
+            progress: String::new(),
             project_roots: vec!["~/dev".into()],
             poll_seconds: 300,
         }
@@ -299,7 +363,6 @@ impl Config {
                 &self.sources.claude,
                 &self.sources.codex,
                 &self.sources.memory,
-                &self.sources.progress,
             ]
             .iter()
             .any(|p| p.is_empty())
@@ -313,20 +376,58 @@ impl Config {
             validate_repository(repo)?;
         }
         let valid_path = |p: &str| {
+            let drive = p.len() > 2
+                && p.as_bytes()[0].is_ascii_alphabetic()
+                && &p[1..2] == ":"
+                && (p[2..].starts_with('\\') || p[2..].starts_with('/'));
             p.len() <= 4096
-                && (p.starts_with('/') || p == "~" || p.starts_with("~/"))
+                && (p.starts_with('/')
+                    || p.starts_with("\\\\")
+                    || drive
+                    || p == "~"
+                    || p.starts_with("~/")
+                    || p.starts_with("~\\"))
                 && !p.contains('\0')
         };
+        let mut seen = BTreeSet::new();
+        if self.sources.accounts.len() > 16 {
+            return Err("At most 16 extra accounts".into());
+        }
+        for account in &self.sources.accounts {
+            let id_ok = !account.id.is_empty()
+                && account.id.len() <= 32
+                && account
+                    .id
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+                && !account.id.starts_with(['-', '_']);
+            if !id_ok
+                || !matches!(account.kind.as_str(), "claude" | "codex" | "github")
+                || !seen.insert(account.key())
+                || account.label.len() > 100
+                || (account.kind != "github" && !valid_path(&account.path))
+                || (account.kind == "github"
+                    && !account.path.is_empty()
+                    && !valid_path(&account.path))
+                || account.repositories.len() > 100
+                || (account.kind != "github" && !account.repositories.is_empty())
+            {
+                return Err(format!("Invalid account '{}'", account.key()));
+            }
+            for repo in &account.repositories {
+                validate_repository(repo)?;
+            }
+        }
         if self.sources.project_roots.len() > 100
             || self.sources.project_roots.iter().any(|p| !valid_path(p))
             || [
                 &self.sources.claude,
                 &self.sources.codex,
                 &self.sources.memory,
-                &self.sources.progress,
             ]
             .iter()
             .any(|p| !valid_path(p))
+            || (!self.sources.progress.is_empty() && !valid_path(&self.sources.progress))
         {
             return Err(
                 "Source paths must be absolute or start with ~/; at most 100 project roots".into(),

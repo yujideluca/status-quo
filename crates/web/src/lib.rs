@@ -130,6 +130,7 @@ pub fn sample_snapshot() -> Snapshot {
         },
     ];
     snapshot.activity.push(Activity {
+        account: "github".into(),
         id: "sample-commit".into(),
         repository: "example/status-quo-demo".into(),
         kind: "commit".into(),
