@@ -630,6 +630,10 @@ fn uninstall_at(
     remove_checked(&manifest_path, &Some(removing))?;
     Ok(())
 }
+/// Whether the install manifest of this user exists.
+pub fn is_installed() -> bool {
+    home().is_ok_and(|h| under(&h, manifest()).is_file())
+}
 pub fn uninstall() -> Result<(), String> {
     let home = home()?;
     uninstall_at(&home, &mut systemctl)?;

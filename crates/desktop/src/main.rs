@@ -1,6 +1,7 @@
 //! Desktop wrapper: Linux (Wayland layer-shell, X11, KDE first) and Windows 10/11 (ordinary window). Shared widgets/tray do not import this crate.
 // A Windows program without a console window; `attach_console` gives it back when a terminal started it.
 #![cfg_attr(windows, windows_subsystem = "windows")]
+mod doctor;
 mod host;
 mod install;
 mod native;
@@ -47,6 +48,7 @@ fn main() {
 fn run() -> Result<(), String> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
+        Some("doctor") => std::process::exit(doctor::run()),
         Some("install") => return install::install(),
         Some("uninstall") => return install::uninstall(),
         Some("launch") => return install::launch(false),
@@ -114,7 +116,7 @@ fn run() -> Result<(), String> {
             return Ok(());
         }
         Some("--help") | Some("help") => {
-            println!("Status Quo\n  status-quo                  Open the desktop panel\n  status-quo collect          Run the shared background collector\n  status-quo inspect          Read collector status as JSON\n  status-quo inspect --widgets Render widget models in a second Rust host\n  status-quo --screenshot PATH Capture this panel's framebuffer and exit\n  status-quo --customize      Open customization");
+            println!("Status Quo\n  status-quo                  Open the desktop panel\n  status-quo doctor           Check that this computer can run Status Quo\n  status-quo collect          Run the shared background collector\n  status-quo inspect          Read collector status as JSON\n  status-quo inspect --widgets Render widget models in a second Rust host\n  status-quo --screenshot PATH Capture this panel's framebuffer and exit\n  status-quo --customize      Open customization");
             return Ok(());
         }
         _ => {}
