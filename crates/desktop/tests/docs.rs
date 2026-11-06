@@ -213,6 +213,7 @@ fn the_installers_and_every_option_they_accept_are_documented_and_real() {
         "--check-only",
         "--dry-run",
         "--uninstall",
+        "--adopt",
         "--yes",
         "--no-deps",
         "--repo",

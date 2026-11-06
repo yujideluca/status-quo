@@ -403,6 +403,7 @@ fn desired_files(home: &Path, current: &Path) -> Result<Vec<(String, Vec<u8>, u3
 fn install_at(
     home: &Path,
     current: &Path,
+    adopt: bool,
     control: &mut impl FnMut(&[&str]) -> Result<(), String>,
 ) -> Result<(), String> {
     text_path(home)?;
@@ -421,6 +422,7 @@ fn install_at(
     let mut finished = Ownership {
         hashes: BTreeMap::new(),
     };
+    let mut backups = Vec::new();
     for (relative, after, mode) in files {
         let path = under(home, &relative);
         let before = read_optional(&path)?;
@@ -429,10 +431,13 @@ fn install_at(
                 .as_ref()
                 .is_some_and(|owner| owner.permits(&relative, old))
             {
-                return Err(format!(
-                    "{} is unmanaged or changed ownership; original retained",
-                    path.display()
-                ));
+                if !adopt {
+                    return Err(format!(
+                        "{} is unmanaged or changed ownership; original retained. To keep a copy and take it over, run `status-quo install --adopt`",
+                        path.display()
+                    ));
+                }
+                backups.push((backup_path(&path), old.clone(), mode));
             }
         }
         let hash = fingerprint(&after);
@@ -453,7 +458,11 @@ fn install_at(
         });
     }
     let hook_edits = hook_edits(home, &under(home, managed()[0]), true)?;
-    // All managed paths and both assistant configurations have passed preflight.
+    // All managed paths and both assistant configurations have passed preflight. Adopted files
+    // are kept first, so nothing is overwritten before its copy exists.
+    for (backup, bytes, mode) in &backups {
+        write_checked(backup, &None, bytes, *mode)?;
+    }
     // A pending manifest makes an interrupted first install/upgrade recoverable.
     let pending_bytes = pending.encode("pending")?;
     write_checked(&manifest_path, &previous_manifest, &pending_bytes, 0o600)?;
@@ -478,10 +487,21 @@ fn install_at(
     )?;
     Ok(())
 }
-pub fn install() -> Result<(), String> {
+/// A name next to `path` that does not exist yet: `<file>.before-status-quo`, then `.1`, `.2`.
+fn backup_path(path: &Path) -> PathBuf {
+    let base = format!("{}.before-status-quo", path.display());
+    let mut candidate = PathBuf::from(&base);
+    let mut n = 0;
+    while candidate.symlink_metadata().is_ok() {
+        n += 1;
+        candidate = PathBuf::from(format!("{base}.{n}"));
+    }
+    candidate
+}
+pub fn install(adopt: bool) -> Result<(), String> {
     let home = home()?;
     let current = std::env::current_exe().map_err(|e| e.to_string())?;
-    install_at(&home, &current, &mut systemctl)?;
+    install_at(&home, &current, adopt, &mut systemctl)?;
     println!("Installed Status Quo to {}. Existing hooks retained. Login startup follows the app configuration.",under(&home, managed()[0]).display());
     Ok(())
 }
@@ -669,7 +689,10 @@ mod tests {
             fs::write(path, bytes).unwrap();
         }
         fn install(&self) -> Result<(), String> {
-            install_at(&self.root, &self.executable, &mut |_| Ok(()))
+            install_at(&self.root, &self.executable, false, &mut |_| Ok(()))
+        }
+        fn install_adopting(&self) -> Result<(), String> {
+            install_at(&self.root, &self.executable, true, &mut |_| Ok(()))
         }
         fn uninstall(&self) -> Result<(), String> {
             uninstall_at(&self.root, &mut |_| Ok(()))
@@ -679,6 +702,40 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.root);
         }
+    }
+    // REQ SQ-42
+    #[test]
+    fn adopting_keeps_a_backup_takes_ownership_and_never_touches_hook_files() {
+        let fixture = Fixture::new();
+        let program = fixture.root.join(managed()[0]);
+        fixture.write(managed()[0], b"hand-copied build");
+        let error = fixture.install().unwrap_err();
+        assert!(error.contains("--adopt"), "{error}");
+        assert_eq!(fs::read(&program).unwrap(), b"hand-copied build");
+        // A bad assistant file stops adoption before any backup or overwrite.
+        fixture.write(".codex/hooks.json", b"malformed");
+        assert!(fixture.install_adopting().is_err());
+        assert_eq!(fs::read(&program).unwrap(), b"hand-copied build");
+        assert!(!backup_path(&program).to_string_lossy().ends_with(".1"));
+        fixture.write(".codex/hooks.json", b"{}");
+        fixture.install_adopting().unwrap();
+        let backup = PathBuf::from(format!("{}.before-status-quo", program.display()));
+        assert_eq!(fs::read(&backup).unwrap(), b"hand-copied build");
+        assert_eq!(
+            fs::read(&program).unwrap(),
+            fs::read(&fixture.executable).unwrap()
+        );
+        fixture.install().unwrap();
+        // A second adoption never overwrites the first backup.
+        fixture.write(managed()[0], b"another hand copy");
+        fixture.install_adopting().unwrap();
+        assert_eq!(fs::read(&backup).unwrap(), b"hand-copied build");
+        assert_eq!(
+            fs::read(format!("{}.1", backup.display())).unwrap(),
+            b"another hand copy"
+        );
+        fixture.uninstall().unwrap();
+        assert!(!program.exists() && backup.exists());
     }
     // REQ SQ-9 SQ-12 SQ-25
     #[test]
@@ -827,10 +884,12 @@ mod tests {
     #[test]
     fn interrupted_install_and_uninstall_resume_using_verified_ownership() {
         let fixture = Fixture::new();
-        assert!(install_at(&fixture.root, &fixture.executable, &mut |_| Err(
-            "simulated user-bus failure".into()
-        ))
-        .is_err());
+        assert!(
+            install_at(&fixture.root, &fixture.executable, false, &mut |_| Err(
+                "simulated user-bus failure".into()
+            ))
+            .is_err()
+        );
         let record: Value = sq_store::read_json(&under(&fixture.root, manifest())).unwrap();
         assert_eq!(record["phase"], "pending");
         fixture.install().unwrap();

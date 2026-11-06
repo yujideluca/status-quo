@@ -6,6 +6,7 @@
 #   bash tools/install.sh --check-only look only; change nothing
 #   bash tools/install.sh --dry-run    print every step instead of doing it
 #   bash tools/install.sh --uninstall  remove Status Quo (settings and history stay)
+#   bash tools/install.sh --adopt      take over a program copied there by hand (a backup is kept)
 # Other options: --yes (do not ask), --no-deps (never use sudo), --repo URL, --src DIR.
 set -euo pipefail
 
@@ -14,7 +15,7 @@ MIN_RUST_MINOR=87
 REPO_URL=${SQ_REPO_URL:-https://github.com/yujideluca/status-quo.git}
 SRC_DIR=${SQ_SRC:-}
 OS_RELEASE=${SQ_OS_RELEASE:-/etc/os-release}
-DRY=0 YES=0 DEPS=1 CHECK=0 UNINSTALL=0
+DRY=0 YES=0 DEPS=1 CHECK=0 UNINSTALL=0 ADOPT=
 
 say() { printf '\n==> %s\n' "$*"; }
 ok() { printf '  [ok]  %s\n' "$*"; }
@@ -36,9 +37,10 @@ while [ $# -gt 0 ]; do
     --no-deps) DEPS=0 ;;
     --check-only) CHECK=1 ;;
     --uninstall) UNINSTALL=1 ;;
+    --adopt) ADOPT=--adopt ;;
     --repo) shift; REPO_URL=${1:?--repo needs a URL} ;;
     --src) shift; SRC_DIR=${1:?--src needs a folder} ;;
-    -h | --help) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h | --help) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown option: $1 (try --help)" ;;
   esac
   shift
@@ -231,7 +233,7 @@ else
   fi
 fi
 say "Installing for your user (no sudo)"
-run "$BIN" install
+run "$BIN" install $ADOPT
 if [ -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]; then
   run "$BIN" launch || warn "could not start it now; it starts at your next login"
 fi

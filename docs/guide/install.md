@@ -30,6 +30,7 @@ It runs six steps and says what it is doing in each:
 | `--yes` | do not ask questions (needed when there is no terminal) |
 | `--no-deps` | never use `sudo`; you install the libraries yourself |
 | `--uninstall` | remove Status Quo (settings and history stay) |
+| `--adopt` | take over a program file that was copied there by hand: the installer normally refuses to overwrite a file it did not install; with this option it first keeps a copy named `status-quo.before-status-quo` next to it (assistant settings are never adopted) |
 | `--repo URL`, `--src DIR` | use another repository address or source folder |
 
 An unknown distribution stops at step 2 with the list of what to install by hand. The Debian and Ubuntu package names come from the project's CI; the dnf, pacman and zypper names are the usual ones and were checked only as printed commands (`--dry-run`), not installed on real machines. Only the Linux used for development (Kubuntu on KDE Plasma) has run the whole script for real.

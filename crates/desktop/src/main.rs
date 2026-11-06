@@ -49,7 +49,13 @@ fn run() -> Result<(), String> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("doctor") => std::process::exit(doctor::run()),
-        Some("install") => return install::install(),
+        Some("install") => {
+            return match args.get(1).map(String::as_str) {
+                None => install::install(false),
+                Some("--adopt") if args.len() == 2 => install::install(true),
+                Some(other) => Err(format!("unknown install option: {other} (only --adopt)")),
+            }
+        }
         Some("uninstall") => return install::uninstall(),
         Some("launch") => return install::launch(false),
         Some("login") => return install::launch(true),
