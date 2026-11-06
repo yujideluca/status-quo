@@ -314,8 +314,9 @@ fn repeated_discovery_matches_a_fresh_walk() {
     let (_, first) = fresh();
     same(&state, &first);
     assert_eq!(
-        first.cursors[&projects
-            .join("-home-me-app/sess/subagents/agent-1.jsonl")
+        first.cursors[&["-home-me-app", "sess", "subagents", "agent-1.jsonl"]
+            .iter()
+            .fold(projects.clone(), |path, part| path.join(part))
             .to_string_lossy()
             .to_string()]
             .parser
