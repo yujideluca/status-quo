@@ -167,4 +167,8 @@ Register it once (`tray.registry.register(Box::new(Note))`) and it shows up in *
 
 Contributors: build, quality gate and structure are in [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md); decisions in [`DESIGN.md`](DESIGN.md) and the [requirements](docs/REQUIREMENTS.md).
 
+## License
+
+Status Quo is open source under the [MIT License](LICENSE). Every dependency it builds with is under a permissive license (MIT, Apache-2.0, ISC, Zlib, Unicode or similar), checked when the project was opened.
+
 *This repository is under active development. A passing build alone does not prove behaviour on your particular desktop; the guides say what has and has not been verified.*

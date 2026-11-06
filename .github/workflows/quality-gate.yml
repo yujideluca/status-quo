@@ -8,17 +8,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@1.87.0
+      - uses: dtolnay/rust-toolchain@9fd5edfc8bba9f7408b867e3f58b5a2119358898 # 1.87.0
         with:
           components: rustfmt, clippy
           targets: wasm32-unknown-unknown
       - name: Native Linux build dependencies
         run: sudo apt-get update && sudo apt-get install -y pkg-config libx11-dev libxkbcommon-dev libwayland-dev libgl1-mesa-dev
-      - uses: Swatinem/rust-cache@v2
-      - uses: actions/cache@v4
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/pipeline-check
           key: pipeline-check-${{ hashFiles('pipeline-check.version') }}
@@ -26,7 +26,7 @@ jobs:
       - name: Browser portable build
         run: cargo build --locked --release --target wasm32-unknown-unknown -p sq-web
       - if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: pipeline-report
           path: build/pipeline-check/report.json
@@ -36,9 +36,9 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.87.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@9fd5edfc8bba9f7408b867e3f58b5a2119358898 # 1.87.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo build --locked --workspace --all-targets
       - run: cargo test --locked --workspace
       # The one-file Windows installer: the release program is built first and embedded.
@@ -51,7 +51,7 @@ jobs:
         run: |
           target\release\status-quo-setup.exe --dry-run
           target\release\status-quo.exe doctor
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: status-quo-setup-windows
           path: target/release/status-quo-setup.exe

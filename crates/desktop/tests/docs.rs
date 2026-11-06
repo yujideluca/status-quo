@@ -265,3 +265,32 @@ fn the_installers_and_every_option_they_accept_are_documented_and_real() {
         );
     }
 }
+
+// REQ SQ-43
+#[test]
+fn the_project_is_mit_licensed_and_workflow_actions_are_pinned_to_commits() {
+    let license = read("LICENSE");
+    assert!(
+        license.starts_with("MIT License"),
+        "LICENSE is not the MIT text"
+    );
+    assert!(license.contains("Permission is hereby granted, free of charge"));
+    assert!(read("Cargo.toml").contains("license = \"MIT\""));
+    assert!(read("README.md").contains("(LICENSE)"));
+    for entry in std::fs::read_dir(root().join(".github/workflows")).unwrap() {
+        let path = entry.unwrap().path();
+        let text = std::fs::read_to_string(&path).unwrap();
+        for line in text.lines().filter(|l| l.contains("uses:")) {
+            let reference = line.split('@').nth(1).unwrap_or("");
+            let sha: String = reference
+                .chars()
+                .take_while(char::is_ascii_hexdigit)
+                .collect();
+            assert!(
+                sha.len() == 40,
+                "{}: not pinned to a commit: {line}",
+                path.display()
+            );
+        }
+    }
+}
