@@ -1,5 +1,8 @@
 //! Read-only native adapters. Pure parsers are shared with fixture verification.
 mod parse;
+#[cfg(test)]
+#[path = "../../scratch.rs"]
+mod scratch;
 pub use parse::*;
 mod logs;
 pub use logs::*;

@@ -1,10 +1,13 @@
+#[path = "../../scratch.rs"]
+mod scratch;
+use scratch::Scratch;
 use serde_json::json;
 use sq_sources::lifecycle_event;
 // REQ SQ-8 SQ-9 SQ-24: concurrent hooks retain newest state, no prompts and one bounded file per session.
 #[test]
 fn concurrent_lifecycle_writers_preserve_newest_observation() {
-    let root = std::env::temp_dir().join(format!("sq-hooks-{}", std::process::id()));
-    std::fs::create_dir_all(&root).unwrap();
+    let scratch = Scratch::new("sq-hooks");
+    let root = scratch.to_path_buf();
     let mut threads = vec![];
     for n in 1..=20 {
         let root = root.clone();

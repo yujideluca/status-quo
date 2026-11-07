@@ -1,16 +1,16 @@
 //! The Linux installer script, run in dry-run mode: it prints what it would do, so every
 //! distribution family can be checked on any Linux machine without changing it.
 #![cfg(unix)]
+#[path = "../../scratch.rs"]
+mod scratch;
+use scratch::Scratch;
 use std::{fs, path::PathBuf, process::Command};
 
 fn script() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tools/install.sh")
 }
-fn scratch(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("sq-installer-{name}-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    dir
+fn scratch(name: &str) -> Scratch {
+    Scratch::new(&format!("sq-installer-{name}"))
 }
 /// Run the script with a made-up os-release and an empty home, as if every dependency were missing.
 fn dry_run(name: &str, os_release: &str, args: &[&str]) -> (bool, String) {

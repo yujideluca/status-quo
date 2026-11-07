@@ -1,11 +1,11 @@
+#[path = "../../scratch.rs"]
+mod scratch;
+use scratch::Scratch;
 use sq_sources::*;
 use std::{cell::RefCell, collections::HashMap, fs, path::Path, path::PathBuf};
 
-fn temp(name: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!("sq-wall-{name}-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(&root).unwrap();
-    root
+fn temp(name: &str) -> Scratch {
+    Scratch::new(&format!("sq-wall-{name}"))
 }
 fn png(path: &Path, rgb: [u8; 3], size: (u32, u32)) {
     image::RgbImage::from_pixel(size.0, size.1, image::Rgb(rgb))

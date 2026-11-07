@@ -8,6 +8,13 @@ step() { printf '\n== %s\n' "$1"; }
 step "1 Rust formatting"
 cargo fmt --all -- --check
 rustfmt --check --edition 2021 tools/rust_architecture.rs tools/resource_check.rs
+step "1b test scratch folders delete themselves"
+# A test that builds temp_dir()/name-PID by hand leaves it behind when it fails or forgets to remove
+# it, and a rerun has a new PID, so the folders pile up in /tmp (RAM on this laptop). Test folders
+# come only from crates/scratch.rs (Scratch, removed on drop); any other temp_dir() line must say
+# `scratch-ok:` and why.
+stray=$(grep -rn --include='*.rs' 'temp_dir()' crates tools | grep -v '^crates/scratch.rs:' | grep -v 'scratch-ok:' || true)
+[ -z "$stray" ] || { printf 'hand-built temp folder (use crates/scratch.rs Scratch):\n%s\n' "$stray"; exit 1; }
 step "2 compiler diagnostics and tests"
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --all-targets --locked

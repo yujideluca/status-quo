@@ -1,3 +1,6 @@
+#[path = "../../scratch.rs"]
+mod scratch;
+use scratch::Scratch;
 use sq_core::{Account, SourceConfig};
 use sq_sources::*;
 use std::{fs, path::Path};
@@ -25,11 +28,8 @@ fn write_claude(home: &Path, project: &str, session: &str, output: u64) {
     )
     .unwrap();
 }
-fn temp(name: &str) -> std::path::PathBuf {
-    let root = std::env::temp_dir().join(format!("sq-accounts-{name}-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(&root).unwrap();
-    root
+fn temp(name: &str) -> Scratch {
+    Scratch::new(&format!("sq-accounts-{name}"))
 }
 fn total(buckets: &[sq_core::Bucket]) -> u64 {
     buckets.iter().map(|b| b.input + b.output).sum()

@@ -5,6 +5,9 @@ mod doctor;
 mod host;
 mod install;
 mod native;
+#[cfg(test)]
+#[path = "../../scratch.rs"]
+mod scratch;
 mod wallpaper;
 use eframe::egui;
 use fs2::FileExt;

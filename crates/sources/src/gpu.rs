@@ -626,8 +626,8 @@ mod tests {
     }
     #[test] // SQ-32: AMD files and an Intel device are read from a fake sysfs tree.
     fn reads_amd_and_intel_trees() {
-        let root = std::env::temp_dir().join(format!("sq-gpu-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
+        let scratch = crate::scratch::Scratch::new("sq-gpu");
+        let root = scratch.to_path_buf();
         let amd = root.join("class/drm/card0");
         fs::create_dir_all(amd.join("device/hwmon/hwmon3")).unwrap();
         fs::write(amd.join("device/vendor"), "0x1002\n").unwrap();

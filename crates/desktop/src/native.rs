@@ -326,7 +326,7 @@ mod tests {
         assert!(
             navigation_command(HostAction::OpenUrl("https://github.com/example\n".into())).is_err()
         );
-        let project = std::env::temp_dir();
+        let project = std::env::temp_dir(); // scratch-ok: an existing folder, nothing is created
         let command = navigation_command(HostAction::OpenSession {
             assistant: "codex".into(),
             id: "safe-id".into(),

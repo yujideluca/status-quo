@@ -1,3 +1,6 @@
+#[path = "../../scratch.rs"]
+mod scratch;
+use scratch::Scratch;
 use serde_json::json;
 use sq_sources::*;
 #[test] // REQ SQ-5 SQ-6: primary is not necessarily the five-hour window.
@@ -52,7 +55,8 @@ fn memory_frontmatter_requires_identity_timestamp_and_known_event_kind() {
 #[test] // REQ SQ-7: a trailing partial line is deferred and read exactly once after completion.
 fn incremental_reader_resumes_partial_lines_and_reports_bad_records() {
     use std::fs;
-    let path = std::env::temp_dir().join(format!("sq-log-{}.jsonl", std::process::id()));
+    let scratch = Scratch::new("sq-log");
+    let path = scratch.join("log.jsonl");
     let line = r#"{"timestamp":"2026-11-02T00:00:00Z","type":"assistant","message":{"id":"one","usage":{"input_tokens":10,"output_tokens":2}}}"#;
     fs::write(&path, format!("bad\n{}", &line[..40])).unwrap();
     let mut cursor = Cursor::new("claude", "test");
@@ -142,8 +146,8 @@ fn memory_excerpt_marks_truncation() {
 #[test]
 fn codex_rotation_does_not_replace_old_deltas_or_count_totals_again() {
     use std::fs;
-    let root = std::env::temp_dir().join(format!("sq-rotation-{}", std::process::id()));
-    fs::create_dir_all(&root).unwrap();
+    let scratch = Scratch::new("sq-rotation");
+    let root = scratch.to_path_buf();
     let path = root.join("session.jsonl");
     let event = |sec, input| {
         format!(
@@ -205,8 +209,8 @@ fn provider_process_exit_is_bounded_after_stdout_closes() {
 // many folders takes minutes (Windows).
 #[test]
 fn discovery_ignores_empty_project_folders_and_watches_only_live_ones() {
-    let root = std::env::temp_dir().join(format!("sq-discover-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let scratch = Scratch::new("sq-discover");
+    let root = scratch.to_path_buf();
     let projects = root.join(".claude/projects");
     for n in 0..1_100 {
         std::fs::create_dir_all(projects.join(format!("-tmp-tmp{n}"))).unwrap();
@@ -246,8 +250,8 @@ fn discovery_ignores_empty_project_folders_and_watches_only_live_ones() {
 fn repeated_discovery_matches_a_fresh_walk() {
     use std::fs;
     use std::time::{Duration, SystemTime};
-    let root = std::env::temp_dir().join(format!("sq-rediscover-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
+    let scratch = Scratch::new("sq-rediscover");
+    let root = scratch.to_path_buf();
     let projects = root.join(".claude").join("projects");
     let dirs = [
         "-tmp-a/memory",

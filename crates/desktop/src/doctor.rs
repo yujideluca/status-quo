@@ -361,8 +361,8 @@ mod tests {
     // REQ SQ-41
     #[test]
     fn missing_folders_use_the_level_the_caller_chose_and_name_the_fix() {
-        let root = std::env::temp_dir().join(format!("sq-doctor-{}", std::process::id()));
-        std::fs::create_dir_all(&root).unwrap();
+        let scratch = crate::scratch::Scratch::new("sq-doctor");
+        let root = scratch.to_path_buf();
         let found = check_folder("N", "its folder", &root, Level::Warn, "fix");
         assert_eq!(found.level, Level::Ok);
         let gone = check_folder(

@@ -1369,7 +1369,8 @@ mod tests {
     // REQ SQ-23 SQ-19
     #[test]
     fn owned_events_directory_is_private_and_avoids_polling_fallback() {
-        let root = root("events-dir");
+        let scratch = root("events-dir");
+        let root = scratch.to_path_buf();
         private_events_dir(&root).unwrap();
         // Windows has no mode bits: its per-user profile folders are the protection there.
         #[cfg(unix)]
@@ -1384,22 +1385,16 @@ mod tests {
         assert!(!Changes::new(vec![root.join("events")]).fallback());
         std::fs::remove_dir_all(root).unwrap();
     }
-    fn root(name: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "sq-workers-{name}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+    fn root(name: &str) -> crate::scratch::Scratch {
+        let root = crate::scratch::Scratch::new(&format!("sq-workers-{name}"));
         std::fs::create_dir_all(root.join("events")).unwrap();
         root
     }
     // REQ SQ-8 SQ-9
     #[test]
     fn explicit_hook_state_beats_newer_unknown_transcript() {
-        let root = root("unknown");
+        let scratch = root("unknown");
+        let root = scratch.to_path_buf();
         let event = lifecycle_event(
             "claude",
             "PermissionRequest",
@@ -1434,7 +1429,8 @@ mod tests {
     // REQ SQ-9 SQ-18
     #[test]
     fn malformed_progress_is_visible() {
-        let root = root("progress");
+        let scratch = root("progress");
+        let root = scratch.to_path_buf();
         std::fs::write(root.join("session.json"), "{broken").unwrap();
         let sources = SourceConfig {
             progress: root.to_string_lossy().into(),
@@ -1466,7 +1462,8 @@ mod tests {
     // REQ SQ-9 SQ-19
     #[test]
     fn cached_evidence_avoids_idle_reparse_and_retains_good_value_during_torn_write() {
-        let root = root("cached");
+        let scratch = root("cached");
+        let root = scratch.to_path_buf();
         let events = root.join("events");
         let path = events.join("claude-session.json");
         let mut event = lifecycle_event(
@@ -1507,7 +1504,8 @@ mod tests {
     // REQ SQ-30: no sampling without a system widget; real samples once one exists.
     #[test]
     fn system_worker_samples_only_while_a_system_widget_exists() {
-        let root = root("system");
+        let scratch = root("system");
+        let root = scratch.to_path_buf();
         let store = Arc::new(Store::new(root.clone()).unwrap());
         let snapshot = Arc::new(RwLock::new(Snapshot::default()));
         let stop = Arc::new(AtomicBool::new(false));
@@ -1543,7 +1541,8 @@ mod tests {
     // REQ SQ-32: real RAM sample, and a GPU sample that never invents numbers while asleep.
     #[test]
     fn ram_and_gpu_workers_sample_real_hardware_without_inventing_gpu_values() {
-        let root = root("ramgpu");
+        let scratch = root("ramgpu");
+        let root = scratch.to_path_buf();
         let store = Arc::new(Store::new(root.clone()).unwrap());
         let saved = store.configuration().unwrap();
         let mut config = saved.config;
@@ -1589,7 +1588,8 @@ mod tests {
     #[test]
     fn cached_child_survives_reconstruction_and_state_evidence_orders_independently_of_unknown_metadata(
     ) {
-        let root = root("ordering");
+        let scratch = root("ordering");
+        let root = scratch.to_path_buf();
         let events = root.join("events");
         let progress_root = root.join("progress");
         std::fs::create_dir(&progress_root).unwrap();
@@ -1686,7 +1686,8 @@ mod tests {
     // REQ SQ-19
     #[test]
     fn watch_failure_exposes_two_second_fallback() {
-        let root = root("watch");
+        let scratch = root("watch");
+        let root = scratch.to_path_buf();
         // A folder that does not exist is a tool that is not installed, not a failure.
         let changes = Changes::new(vec![root.join("absent")]);
         assert!(!changes.fallback());
@@ -1716,7 +1717,8 @@ mod tests {
     // REQ SQ-12 SQ-24
     #[test]
     fn persisted_snapshot_omits_memory_bodies_and_save_failure_is_visible() {
-        let root = root("persist");
+        let scratch = root("persist");
+        let root = scratch.to_path_buf();
         let mut current = Snapshot {
             revision: 10,
             ..Default::default()
@@ -1763,7 +1765,8 @@ mod tests {
     // REQ SQ-9 SQ-19 SQ-24
     #[test]
     fn real_local_worker_observes_new_hook_within_two_seconds_and_flushes_on_stop() {
-        let root = root("live-local");
+        let scratch = root("live-local");
+        let root = scratch.to_path_buf();
         let store = Arc::new(Store::new(root.clone()).unwrap());
         let mut config = Config::default();
         for name in ["claude/projects", "codex/sessions", "progress"] {
@@ -1818,7 +1821,8 @@ mod tests {
     // REQ SQ-36: a tool that is not installed has no evidence folder, and that is not a fault.
     #[test]
     fn a_missing_evidence_folder_is_empty_not_unavailable() {
-        let root = root("missing-evidence");
+        let scratch = root("missing-evidence");
+        let root = scratch.to_path_buf();
         let mut evidence: Evidence<Progress> = Evidence::default();
         evidence.refresh(
             &root.join("not-installed"),

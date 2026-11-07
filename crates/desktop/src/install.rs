@@ -668,17 +668,12 @@ pub fn uninstall() -> Result<(), String> {
 mod tests {
     use super::*;
     struct Fixture {
-        root: PathBuf,
+        root: crate::scratch::Scratch,
         executable: PathBuf,
     }
     impl Fixture {
         fn new() -> Self {
-            let root = std::env::temp_dir().join(format!(
-                "sq-install-{}-{}",
-                std::process::id(),
-                SEQUENCE.fetch_add(1, Ordering::Relaxed)
-            ));
-            fs::create_dir_all(&root).unwrap();
+            let root = crate::scratch::Scratch::new("sq-install");
             let executable = root.join("source-binary");
             fs::write(&executable, b"synthetic Rust executable fixture").unwrap();
             Self { root, executable }
@@ -696,11 +691,6 @@ mod tests {
         }
         fn uninstall(&self) -> Result<(), String> {
             uninstall_at(&self.root, &mut |_| Ok(()))
-        }
-    }
-    impl Drop for Fixture {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.root);
         }
     }
     // REQ SQ-42
@@ -960,11 +950,11 @@ mod windows_tests {
     // REQ SQ-36: the Windows installer writes the program and one hidden Startup launcher.
     #[test]
     fn windows_install_files_are_the_program_and_a_hidden_startup_launcher() {
-        let root = std::env::temp_dir().join(format!("sq-win-install-{}", std::process::id()));
-        fs::create_dir_all(&root).unwrap();
+        let scratch = crate::scratch::Scratch::new("sq-win-install");
+        let root = scratch.to_path_buf();
         let exe = root.join("source.exe");
         fs::write(&exe, b"MZ fixture").unwrap();
-        let home = std::env::temp_dir().join("Users").join("me home");
+        let home = std::env::temp_dir().join("Users").join("me home"); // scratch-ok: only a path, nothing is created
         let files = windows_files(&home, &exe).unwrap();
         let names: Vec<_> = files.iter().map(|(n, ..)| n.as_str()).collect();
         assert_eq!(names, WINDOWS_MANAGED);

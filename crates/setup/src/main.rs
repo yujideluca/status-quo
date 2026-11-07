@@ -98,7 +98,7 @@ fn windows_version() -> Option<u32> {
 }
 /// The program to run: the embedded copy, or a `status-quo.exe` next to this installer.
 fn unpack() -> Result<PathBuf, String> {
-    let dir = env::temp_dir().join(format!("status-quo-setup-{}", std::process::id()));
+    let dir = env::temp_dir().join(format!("status-quo-setup-{}", std::process::id())); // scratch-ok: production, the unpacked program must outlive the installer
     fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     let target = dir.join("status-quo.exe");
     if !PAYLOAD.is_empty() {

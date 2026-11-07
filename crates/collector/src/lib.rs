@@ -1,5 +1,8 @@
 //! A single per-user collector serves independent local hosts over a private socket.
 mod events;
+#[cfg(test)]
+#[path = "../../scratch.rs"]
+mod scratch;
 mod transport;
 mod workers;
 pub use events::record_lifecycle;

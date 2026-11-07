@@ -1,3 +1,6 @@
+#[path = "../../scratch.rs"]
+mod scratch;
+use scratch::Scratch;
 use sq_collector::*;
 use sq_contract::*;
 use sq_core::*;
@@ -5,8 +8,8 @@ use std::{fs, thread, time::Duration};
 // REQ SQ-13 SQ-12 SQ-18: independent clients see conflicts and unchanged revisions.
 #[test]
 fn transport_rejects_bad_frames_and_preserves_configuration_between_clients() {
-    let root = std::env::temp_dir().join(format!("sq-transport-{}", std::process::id()));
-    fs::create_dir_all(&root).unwrap();
+    let scratch = Scratch::new("sq-transport");
+    let root = scratch.to_path_buf();
     let server = Service::new(root.clone()).unwrap();
     let path = server.socket_path();
     let stop = server.stop_handle();
