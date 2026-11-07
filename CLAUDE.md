@@ -5,6 +5,7 @@ Status Quo is Giovanni's all-Rust Linux desktop widget tray. KDE is the first wr
 ## Enforced principles
 
 1. Requirements precede meaningful failing tests and implementation. Tests carry standalone `// REQ SQ-*` comments; the pinned traceability check scans Rust files under `crates` and `tools`.
+   An ID is two capital letters, a dash and the next free number (`XX-12`), never a sub-scheme such as `XX-V2-1`; tasks run in parallel each get a block of free numbers reserved by whoever starts them. A tag is `REQ <ID>` as the first word of a comment, docstring or test name. pipeline-check v0.7.0 fails on any other shape (PC-17, PC-18).
 2. `sq-core`, `sq-contract` and `sq-widgets` have no GUI, filesystem, process or network dependencies. `tools/rust_architecture.rs` checks their manifests and source IO boundaries, and keeps IO out of the reusable tray, with planted-defect detector tests. `sq-tray` depends only on portable models and egui; platform work belongs to wrappers.
 3. `tools/quality_gate.sh` defines passing. CI calls the pinned shared runner, reads `pipeline-check.toml` and fails on `falha`. Do not weaken limits, disable tests or relabel unverified behavior.
 4. Shared tools stay in their own repository and are consumed at a pinned version. Do not copy the shared pipeline implementation.
