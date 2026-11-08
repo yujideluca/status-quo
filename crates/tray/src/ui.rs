@@ -752,8 +752,14 @@ impl Tray {
                                 _ => 24.0,
                             })
                             .sum();
-                        let share =
-                            ((available - others) / charts as f32 - 6.0).clamp(34.0, 1_200.0);
+                        let share = crate::layout::chart_share(
+                            available,
+                            others,
+                            ui.spacing().item_spacing.y,
+                            view.nodes.len(),
+                            charts,
+                            1_200.0,
+                        );
                         ui.data_mut(|d| d.insert_temp(egui::Id::new("sq-chart-h"), share));
                     }
                     egui::ScrollArea::vertical()

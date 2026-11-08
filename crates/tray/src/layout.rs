@@ -42,6 +42,20 @@ pub fn fit_scale(total_height: f32, space: f32) -> f32 {
     (space / total_height).max(0.6)
 }
 
+/// Height of each chart in a widget: what `available` leaves after the other lines (`others`) and
+/// the gaps between all `nodes` is split between `charts`, never below 34 or above `max`.
+pub fn chart_share(
+    available: f32,
+    others: f32,
+    spacing: f32,
+    nodes: usize,
+    charts: usize,
+    max: f32,
+) -> f32 {
+    let gaps = spacing * nodes as f32;
+    ((available - others - gaps) / charts.max(1) as f32).clamp(34.0, max)
+}
+
 /// Distance, in pixels, within which a border or a size sticks to another widget.
 pub const SNAP: f32 = 10.0;
 /// Smallest size a widget can be dragged to.
@@ -422,6 +436,17 @@ mod tests {
         let scale = fit_scale(total, 900.0);
         let filled: f32 = heights.iter().map(|h| h * scale).sum();
         assert!((filled - 900.0).abs() < 0.01);
+    }
+
+    // REQ SQ-44: charts share the room left after text and gaps, so the content fits.
+    #[test]
+    fn chart_share_counts_gaps_and_caps_compact_charts() {
+        // 2 GPUs: 4 text lines (24 each), 4 charts, 8 nodes, 8 px gaps, 340 px room.
+        let share = chart_share(340.0, 96.0, 8.0, 8, 4, 1_200.0);
+        assert_eq!(share, 45.0);
+        assert!(96.0 + 4.0 * share + 64.0 <= 340.0);
+        assert_eq!(chart_share(10.0, 96.0, 8.0, 8, 4, 1_200.0), 34.0);
+        assert_eq!(chart_share(500.0, 0.0, 8.0, 1, 0, 1_200.0), 492.0);
     }
 
     // REQ SQ-29: any border drags freely on both axes, with a minimum size and no negative corner.
