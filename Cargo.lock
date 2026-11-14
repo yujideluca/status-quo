@@ -2833,7 +2833,7 @@ dependencies = [
 
 [[package]]
 name = "sq-collector"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "fs2",
  "notify",
@@ -2847,7 +2847,7 @@ dependencies = [
 
 [[package]]
 name = "sq-contract"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2856,7 +2856,7 @@ dependencies = [
 
 [[package]]
 name = "sq-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2864,7 +2864,7 @@ dependencies = [
 
 [[package]]
 name = "sq-sources"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "image",
@@ -2877,7 +2877,7 @@ dependencies = [
 
 [[package]]
 name = "sq-store"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "fs2",
  "serde",
@@ -2887,7 +2887,7 @@ dependencies = [
 
 [[package]]
 name = "sq-tray"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "egui",
  "serde_json",
@@ -2898,7 +2898,7 @@ dependencies = [
 
 [[package]]
 name = "sq-web"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "eframe",
  "sq-contract",
@@ -2911,7 +2911,7 @@ dependencies = [
 
 [[package]]
 name = "sq-widgets"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde_json",
  "sq-contract",
@@ -2932,7 +2932,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "status-quo"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ctrlc",
  "eframe",
@@ -2958,7 +2958,7 @@ dependencies = [
 
 [[package]]
 name = "status-quo-setup"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "strum"

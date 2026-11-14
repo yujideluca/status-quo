@@ -34,10 +34,11 @@ bash status-quo-linux-x86_64/install.sh
 |---|---|
 | `--dry-run` | print every step instead of doing it |
 | `--no-launch` | install but do not start it now |
+| `--no-deps` | never use `sudo`: you install the system libraries yourself |
 | `--adopt` | take over a program file that was copied there by hand (a backup is kept) |
 | `--uninstall` | remove Status Quo (settings and history stay) |
 
-The program loads X11 or Wayland and OpenGL from the system when it starts; `status-quo doctor` names any that is missing. The package was built on Ubuntu 22.04, so it runs on systems with glibc 2.35 or newer. Other architectures: use the source installer below.
+The program loads X11 or Wayland and OpenGL from the system when it starts. The installer installs any that is missing with `apt-get`, `dnf`, `pacman` or `zypper` (the password is asked once, only then); `status-quo doctor` reports what is still missing. The package was built on Ubuntu 22.04, so it runs on systems with glibc 2.35 or newer. Other architectures: use the source installer below.
 
 ### Linux: `tools/install.sh`
 

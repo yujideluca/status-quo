@@ -156,6 +156,15 @@ fn prebuilt_script() -> PathBuf {
 /// The prebuilt package layout: the script next to a `status-quo` file. The file is a stub, so
 /// a dry run proves what would be executed without installing anything.
 fn run_prebuilt(name: &str, with_binary: bool, args: &[&str]) -> (bool, String) {
+    run_prebuilt_on(name, with_binary, args, "ID=ubuntu\nID_LIKE=debian\n", "0")
+}
+fn run_prebuilt_on(
+    name: &str,
+    with_binary: bool,
+    args: &[&str],
+    os_release: &str,
+    libs_missing: &str,
+) -> (bool, String) {
     let dir = scratch(name);
     fs::copy(prebuilt_script(), dir.join("install.sh")).unwrap();
     if with_binary {
@@ -163,10 +172,14 @@ fn run_prebuilt(name: &str, with_binary: bool, args: &[&str]) -> (bool, String) 
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(dir.join("status-quo"), fs::Permissions::from_mode(0o755)).unwrap();
     }
+    let osr = dir.join("os-release");
+    fs::write(&osr, os_release).unwrap();
     let out = Command::new("bash")
         .arg(dir.join("install.sh"))
         .args(args)
         .env("HOME", dir.join("home"))
+        .env("SQ_OS_RELEASE", &osr)
+        .env("SQ_ASSUME_MISSING_LIBS", libs_missing)
         .env_remove("WAYLAND_DISPLAY")
         .env_remove("DISPLAY")
         .output()
@@ -308,4 +321,50 @@ fn one_paste_falls_back_to_the_source_installer_when_no_release_exists() {
     assert!(ok, "{text}");
     assert!(text.contains("no prebuilt package"), "{text}");
     assert!(text.contains("1/6") && text.contains("6/6"), "{text}");
+}
+
+// REQ SQ-45
+#[test]
+fn the_prebuilt_installer_installs_the_missing_system_libraries_itself() {
+    for (name, os, expect) in [
+        (
+            "lib-ubuntu",
+            "ID=ubuntu\nID_LIKE=debian\n",
+            "apt-get install -y libx11-6",
+        ),
+        ("lib-fedora", "ID=fedora\n", "dnf install -y libX11"),
+        (
+            "lib-arch",
+            "ID=arch\n",
+            "pacman -S --needed --noconfirm libx11",
+        ),
+        (
+            "lib-suse",
+            "ID=opensuse-tumbleweed\nID_LIKE=\"opensuse suse\"\n",
+            "zypper --non-interactive install libX11-6",
+        ),
+    ] {
+        let (ok, text) = run_prebuilt_on(name, true, &["--dry-run"], os, "1");
+        assert!(ok, "{name}: {text}");
+        assert!(
+            text.contains(expect),
+            "{name} should print `{expect}`:\n{text}"
+        );
+        for forbidden in ["cargo", "rustup", "git clone"] {
+            assert!(!text.contains(forbidden), "{name}: {forbidden} in:\n{text}");
+        }
+    }
+    let (ok, text) = run_prebuilt_on(
+        "lib-skip",
+        true,
+        &["--dry-run", "--no-deps"],
+        "ID=ubuntu\n",
+        "1",
+    );
+    assert!(
+        ok && text.contains("skipped (--no-deps)") && !text.contains("apt-get"),
+        "{text}"
+    );
+    let (ok, text) = run_prebuilt_on("lib-unknown", true, &["--dry-run"], "ID=plan9\n", "1");
+    assert!(!ok && text.contains("unknown distribution"), "{text}");
 }

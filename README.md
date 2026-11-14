@@ -6,7 +6,7 @@ Status Quo puts the numbers you keep checking (your Claude and Codex usage, your
 
 ## Install in two minutes
 
-You do not need to know GitHub, programming or anything technical. You copy **one line**, paste it, press Enter. The line downloads Status Quo, checks that the download is intact, installs it **only for your user** (no administrator rights) and opens it.
+You do not need to know GitHub, programming or anything technical. You copy **one line**, paste it, press Enter. The line downloads Status Quo, checks that the download is intact, installs everything Status Quo needs (including the system libraries it draws with, if your computer lacks them) and opens it. Status Quo itself goes **only into your user's folder**.
 
 **Step 1. Open a terminal.** A terminal is a window where you type commands.
 
@@ -38,7 +38,7 @@ irm https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.ps1 |
 | `curl: command not found` (Linux) | Type `sudo apt-get install -y curl` (Debian, Ubuntu, Mint) or install `curl` with your system's package manager, then paste the line again |
 | `checksum does not match` | The download was damaged. Nothing was installed. Paste the line again |
 | Red text mentioning a release (Windows) | Your connection failed or the download is not available yet. Try again in a few minutes |
-| It asks for your password (Linux) | Only happens on processors other than the common x86-64 type, where Status Quo must be built on your machine and needs a few system packages. Type your password; nothing else is asked |
+| It asks for your password (Linux) | Normal when a system library is missing: the installer installs it for you (once, with your password). Rust, if it is ever needed, is installed automatically too: on processors other than the common x86-64 type, Status Quo is built on your machine and the installer fetches the compiler by itself |
 | Anything else | See [When something looks off](#8-when-something-looks-off) |
 
 **Remove it any time.** Your settings and history stay on your computer.
@@ -89,7 +89,7 @@ Nothing is sent anywhere. There are no analytics, no generated summaries and no 
 
 ## 2. Put it on your computer
 
-**The fastest way is the one-line install at the top of this page.** If you would rather download the files yourself, open the [Releases page](https://github.com/yujideluca/status-quo/releases/latest) and take `status-quo-linux-x86_64.tar.gz` (Linux: unpack it, then run `bash install.sh` inside) or `status-quo-setup.exe` (Windows: double-click it). Add `--dry-run` to any installer to see every step without doing it. The program loads the system's drawing libraries (X11 or Wayland, OpenGL) when it starts; every desktop has them, and `status-quo doctor` names any that is missing.
+**The fastest way is the one-line install at the top of this page.** If you would rather download the files yourself, open the [Releases page](https://github.com/yujideluca/status-quo/releases/latest) and take `status-quo-linux-x86_64.tar.gz` (Linux: unpack it, then run `bash install.sh` inside) or `status-quo-setup.exe` (Windows: double-click it). Add `--dry-run` to any installer to see every step without doing it. The installer inside also installs, with your system's package manager, any drawing library (X11, Wayland, OpenGL) your computer lacks.
 
 **Building it yourself: one command.** It checks your computer, installs what is missing, builds the program, installs it for your user only, starts it and prints a compatibility report.
 
