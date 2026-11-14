@@ -165,6 +165,16 @@ fn run_prebuilt_on(
     os_release: &str,
     libs_missing: &str,
 ) -> (bool, String) {
+    run_prebuilt_with(name, with_binary, args, os_release, libs_missing, None)
+}
+fn run_prebuilt_with(
+    name: &str,
+    with_binary: bool,
+    args: &[&str],
+    os_release: &str,
+    libs_missing: &str,
+    ldconfig_list: Option<&str>,
+) -> (bool, String) {
     let dir = scratch(name);
     fs::copy(prebuilt_script(), dir.join("install.sh")).unwrap();
     if with_binary {
@@ -174,12 +184,19 @@ fn run_prebuilt_on(
     }
     let osr = dir.join("os-release");
     fs::write(&osr, os_release).unwrap();
-    let out = Command::new("bash")
+    let mut cmd = Command::new("bash");
+    if let Some(list) = ldconfig_list {
+        let file = dir.join("ldconfig.txt");
+        fs::write(&file, list).unwrap();
+        cmd.env("SQ_LDCONFIG_LIST", file);
+    }
+    let out = cmd
         .arg(dir.join("install.sh"))
         .args(args)
         .env("HOME", dir.join("home"))
         .env("SQ_OS_RELEASE", &osr)
-        .env("SQ_ASSUME_MISSING_LIBS", libs_missing)
+        .env_remove("SQ_ASSUME_MISSING_LIBS")
+        .envs((!libs_missing.is_empty()).then_some(("SQ_ASSUME_MISSING_LIBS", libs_missing)))
         .env_remove("WAYLAND_DISPLAY")
         .env_remove("DISPLAY")
         .output()
@@ -367,4 +384,53 @@ fn the_prebuilt_installer_installs_the_missing_system_libraries_itself() {
     );
     let (ok, text) = run_prebuilt_on("lib-unknown", true, &["--dry-run"], "ID=plan9\n", "1");
     assert!(!ok && text.contains("unknown distribution"), "{text}");
+}
+
+// REQ SQ-45
+#[test]
+fn the_prebuilt_installer_reads_the_library_list_correctly_even_when_it_is_long() {
+    // Regression: `printf | grep -q` under pipefail called every library missing, so the real
+    // installer asked for sudo on computers that had everything.
+    let mut all = String::new();
+    for i in 0..20000 {
+        all.push_str(&format!(
+            "\tlibfiller{i}.so.1 (libc6,x86-64) => /usr/lib/x/libfiller{i}.so.1\n"
+        ));
+    }
+    for lib in [
+        "libX11.so.6",
+        "libxcb.so.1",
+        "libxkbcommon.so.0",
+        "libxkbcommon-x11.so.0",
+        "libwayland-client.so.0",
+        "libGL.so.1",
+        "libEGL.so.1",
+        "libXcursor.so.1",
+        "libXi.so.6",
+        "libXrandr.so.2",
+    ] {
+        all.push_str(&format!("\t{lib} (libc6,x86-64) => /usr/lib/x/{lib}\n"));
+    }
+    let (ok, text) = run_prebuilt_with(
+        "lib-present",
+        true,
+        &["--dry-run"],
+        "ID=ubuntu\n",
+        "",
+        Some(&all),
+    );
+    assert!(
+        ok && text.contains("already installed") && !text.contains("apt-get"),
+        "{text}"
+    );
+    let without = all.replace("libEGL.so.1", "libgone.so.1");
+    let (ok, text) = run_prebuilt_with(
+        "lib-one-missing",
+        true,
+        &["--dry-run"],
+        "ID=ubuntu\n",
+        "",
+        Some(&without),
+    );
+    assert!(ok && text.contains("apt-get install -y"), "{text}");
 }

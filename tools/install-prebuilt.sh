@@ -82,11 +82,17 @@ libs_missing() {
   # For tests: SQ_ASSUME_MISSING_LIBS=1 pretends they are missing, =0 pretends they are present.
   [ "${SQ_ASSUME_MISSING_LIBS:-}" = 1 ] && return 0
   [ "${SQ_ASSUME_MISSING_LIBS:-}" = 0 ] && return 1
-  command -v ldconfig >/dev/null 2>&1 || [ -x /sbin/ldconfig ] || return 1
   local list lib
-  list=$( (ldconfig -p 2>/dev/null || /sbin/ldconfig -p 2>/dev/null) || true)
+  if [ -n "${SQ_LDCONFIG_LIST:-}" ]; then # for tests: a file standing in for `ldconfig -p`
+    list=$(cat "$SQ_LDCONFIG_LIST")
+  else
+    # ldconfig lives in /sbin, which a normal user's PATH often lacks.
+    list=$( (ldconfig -p || /sbin/ldconfig -p || /usr/sbin/ldconfig -p) 2>/dev/null || true)
+    [ -n "$list" ] || return 1
+  fi
   for lib in libX11.so.6 libxcb.so.1 libxkbcommon.so.0 libxkbcommon-x11.so.0 libwayland-client.so.0 libGL.so.1 libEGL.so.1 libXcursor.so.1 libXi.so.6 libXrandr.so.2; do
-    printf '%s\n' "$list" | grep -q "$lib" || return 0
+    # A here-string, not a pipe: under pipefail grep -q closing the pipe early reads as a failure.
+    grep -q "$lib" <<<"$list" || return 0
   done
   return 1
 }
