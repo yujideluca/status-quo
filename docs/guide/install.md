@@ -4,6 +4,29 @@ Back to the [tour](../../README.md). Two automatic installers do everything on t
 
 ## The automatic installers
 
+### Plug and play: the release downloads
+
+The [Releases page](https://github.com/yujideluca/status-quo/releases/latest) carries ready-made files, built by CI from the tagged commit. You need no Rust, compiler or source.
+
+| File | System | What it does |
+|---|---|---|
+| `status-quo-linux-x86_64.tar.gz` | Linux on x86_64 | unpack it and run `install.sh` inside: installs for your user only (no `sudo`), starts it and runs `status-quo doctor` |
+| `status-quo-setup.exe` | Windows 10 or 11 | described under Windows below |
+
+```sh
+tar -xzf status-quo-linux-x86_64.tar.gz
+bash status-quo-linux-x86_64/install.sh
+```
+
+| Option | Meaning |
+|---|---|
+| `--dry-run` | print every step instead of doing it |
+| `--no-launch` | install but do not start it now |
+| `--adopt` | take over a program file that was copied there by hand (a backup is kept) |
+| `--uninstall` | remove Status Quo (settings and history stay) |
+
+The program loads X11 or Wayland and OpenGL from the system when it starts; `status-quo doctor` names any that is missing. The package was built on Ubuntu 22.04, so it runs on systems with glibc 2.35 or newer. Other architectures: use the source installer below.
+
 ### Linux: `tools/install.sh`
 
 ```sh

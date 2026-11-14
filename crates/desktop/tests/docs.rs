@@ -294,3 +294,29 @@ fn the_project_is_mit_licensed_and_workflow_actions_are_pinned_to_commits() {
         }
     }
 }
+
+// REQ SQ-45
+#[test]
+fn every_release_carries_the_prebuilt_packages_and_the_docs_point_to_them() {
+    let workflow = read(".github/workflows/release.yml");
+    let readme = read("README.md");
+    let guide = read("docs/guide/install.md");
+    for asset in ["status-quo-linux-x86_64.tar.gz", "status-quo-setup.exe"] {
+        assert!(
+            workflow.contains(asset),
+            "release.yml does not publish {asset}"
+        );
+        assert!(readme.contains(asset), "README does not name {asset}");
+        assert!(guide.contains(asset), "install guide does not name {asset}");
+    }
+    assert!(
+        workflow.contains("tools/install-prebuilt.sh"),
+        "the Linux package must carry the prebuilt installer"
+    );
+    for flag in ["--dry-run", "--no-launch", "--adopt", "--uninstall"] {
+        assert!(
+            read("tools/install-prebuilt.sh").contains(flag),
+            "install-prebuilt.sh lacks {flag}"
+        );
+    }
+}

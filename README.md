@@ -36,7 +36,20 @@ Nothing is sent anywhere. There are no analytics, no generated summaries and no 
 
 ## 2. Put it on your computer
 
-**The fast way: one command.** It checks your computer, installs what is missing, builds or unpacks the program, installs it for your user only, starts it and prints a compatibility report.
+**Plug and play: download, no Rust needed.** Open the [Releases page](https://github.com/yujideluca/status-quo/releases/latest) and take the file for your system. It carries the program ready to run; it installs for your user only and starts it.
+
+```sh
+# Linux (x86_64): unpack, run the installer inside
+tar -xzf status-quo-linux-x86_64.tar.gz && bash status-quo-linux-x86_64/install.sh
+```
+
+```text
+Windows: double-click  status-quo-setup.exe   (one file, no administrator rights)
+```
+
+`status-quo-linux-x86_64.tar.gz` (the program plus `install.sh`) and `status-quo-setup.exe` are attached to each tagged release by CI. The program loads the system's drawing libraries (X11 or Wayland, OpenGL) when it starts; every desktop has them, and `status-quo doctor` names any that is missing. Add `--dry-run` to either installer to see every step without doing it, `--uninstall` to remove it. The compatibility report is also a command you can run any time: `status-quo doctor`.
+
+**Building it yourself: one command.** It checks your computer, installs what is missing, builds the program, installs it for your user only, starts it and prints a compatibility report.
 
 ```sh
 # Linux (Debian/Ubuntu, Fedora, Arch and openSUSE families; sudo is asked only for packages)
@@ -44,11 +57,7 @@ git clone https://github.com/yujideluca/status-quo.git && cd status-quo
 bash tools/install.sh
 ```
 
-```text
-Windows: double-click  status-quo-setup.exe   (one file, no administrator rights)
-```
-
-`status-quo-setup.exe` is attached to each tagged release; until the first release is published, every CI run uploads it as the artifact `status-quo-setup-windows` (Actions tab). Add `--dry-run` to either installer to see every step without doing it, `--check-only` (Linux) or `--check` (Windows) to only look, and `--uninstall` to remove it. The compatibility report is also a command you can run any time: `status-quo doctor`.
+Options of the source installer: `--check-only` (only look), `--dry-run`, `--uninstall`.
 
 **The manual way**, if you prefer to see each step (it is what the installer does for you):
 

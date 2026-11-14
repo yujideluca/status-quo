@@ -1,11 +1,43 @@
 name: release
-# Publishes the one-file Windows installer when a version tag such as v0.1.0 is pushed.
+# Publishes the plug-and-play downloads (Linux package and one-file Windows installer, SQ-45)
+# when a version tag such as v0.1.0 is pushed.
 on:
   push:
     tags: ["v*"]
 permissions:
   contents: write
 jobs:
+  linux-package:
+    # Built on the oldest Ubuntu runner so the program runs on older glibc systems too.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@9fd5edfc8bba9f7408b867e3f58b5a2119358898 # 1.87.0
+      - run: sudo apt-get update && sudo apt-get install -y pkg-config libx11-dev libxkbcommon-dev libwayland-dev libgl1-mesa-dev
+      - run: cargo build --locked --release -p status-quo
+      - name: Pack status-quo-linux-x86_64.tar.gz
+        run: |
+          mkdir -p pkg/status-quo-linux-x86_64
+          cp target/release/status-quo pkg/status-quo-linux-x86_64/status-quo
+          cp tools/install-prebuilt.sh pkg/status-quo-linux-x86_64/install.sh
+          cp LICENSE README.md pkg/status-quo-linux-x86_64/
+          chmod +x pkg/status-quo-linux-x86_64/install.sh pkg/status-quo-linux-x86_64/status-quo
+          tar -C pkg -czf status-quo-linux-x86_64.tar.gz status-quo-linux-x86_64
+      - name: Smoke test the unpacked package
+        run: |
+          tar -xzf status-quo-linux-x86_64.tar.gz -C "$RUNNER_TEMP"
+          bash "$RUNNER_TEMP/status-quo-linux-x86_64/install.sh" --dry-run
+          "$RUNNER_TEMP/status-quo-linux-x86_64/status-quo" doctor || true
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Both jobs may reach this line together: the loser's create fails and it just uploads.
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --title "Status Quo $GITHUB_REF_NAME" --generate-notes \
+            || sleep 5
+          gh release upload "$GITHUB_REF_NAME" status-quo-linux-x86_64.tar.gz --clobber
   windows-installer:
     runs-on: windows-latest
     timeout-minutes: 60
@@ -25,5 +57,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" target/release/status-quo-setup.exe \
-            --title "Status Quo $GITHUB_REF_NAME" --generate-notes
+          # Both jobs may reach this line together: the loser's create fails and it just uploads.
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --title "Status Quo $GITHUB_REF_NAME" --generate-notes \
+            || sleep 5
+          gh release upload "$GITHUB_REF_NAME" target/release/status-quo-setup.exe --clobber

@@ -149,3 +149,57 @@ fn help_bad_options_uninstall_and_missing_rust_behave() {
         "{text}"
     );
 }
+
+fn prebuilt_script() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tools/install-prebuilt.sh")
+}
+/// The prebuilt package layout: the script next to a `status-quo` file. The file is a stub, so
+/// a dry run proves what would be executed without installing anything.
+fn run_prebuilt(name: &str, with_binary: bool, args: &[&str]) -> (bool, String) {
+    let dir = scratch(name);
+    fs::copy(prebuilt_script(), dir.join("install.sh")).unwrap();
+    if with_binary {
+        fs::write(dir.join("status-quo"), "#!/bin/sh\nexit 0\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(dir.join("status-quo"), fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let out = Command::new("bash")
+        .arg(dir.join("install.sh"))
+        .args(args)
+        .env("HOME", dir.join("home"))
+        .env_remove("WAYLAND_DISPLAY")
+        .env_remove("DISPLAY")
+        .output()
+        .unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (out.status.success(), text)
+}
+
+// REQ SQ-45
+#[test]
+fn the_prebuilt_linux_package_installs_without_rust_or_a_compiler() {
+    let (ok, text) = run_prebuilt("prebuilt-dry", true, &["--dry-run"]);
+    assert!(ok, "{text}");
+    assert!(
+        text.contains("status-quo install") && text.contains("doctor"),
+        "{text}"
+    );
+    for forbidden in ["cargo", "rustup", "sudo", "git clone"] {
+        assert!(!text.contains(forbidden), "{forbidden} in:\n{text}");
+    }
+    let (ok, text) = run_prebuilt("prebuilt-uninstall", true, &["--dry-run", "--uninstall"]);
+    assert!(ok && text.contains("status-quo uninstall"), "{text}");
+}
+
+// REQ SQ-45
+#[test]
+fn the_prebuilt_installer_refuses_a_package_without_the_program_and_unknown_options() {
+    let (ok, text) = run_prebuilt("prebuilt-empty", false, &[]);
+    assert!(!ok && text.contains("status-quo"), "{text}");
+    let (ok, text) = run_prebuilt("prebuilt-bad", true, &["--nonsense"]);
+    assert!(!ok && text.contains("unknown option"), "{text}");
+}
