@@ -1,6 +1,59 @@
 <p align="center"><img src="docs/img/hero.svg" alt="Status Quo: a desktop tray that assembles itself from separate widgets" width="100%"></p>
 
-# Status Quo, a guided tour
+# Status Quo
+
+Status Quo puts the numbers you keep checking (your Claude and Codex usage, your GitHub activity, your computer's load) on your desktop, so you never have to open anything to see them.
+
+## Install in two minutes
+
+You do not need to know GitHub, programming or anything technical. You copy **one line**, paste it, press Enter. The line downloads Status Quo, checks that the download is intact, installs it **only for your user** (no administrator rights) and opens it.
+
+**Step 1. Open a terminal.** A terminal is a window where you type commands.
+
+- **Linux:** press `Ctrl` + `Alt` + `T`, or search for "Terminal" in your menu.
+- **Windows 10 or 11:** click the Start button, type `PowerShell`, press Enter.
+
+**Step 2. Copy the line for your system, paste it into that window and press Enter.**
+
+Linux (paste with `Ctrl` + `Shift` + `V`):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.sh | bash
+```
+
+Windows, in PowerShell (paste with a right-click):
+
+```powershell
+irm https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.ps1 | iex
+```
+
+**Step 3. Wait a minute.** Lines of text scroll by; that is normal. At the end the tray appears on your desktop.
+
+**Did it work?** You see the panel on your desktop. To get a plain-words health report at any time, type `status-quo doctor`.
+
+**Something went wrong?**
+
+| What you see | What to do |
+|---|---|
+| `curl: command not found` (Linux) | Type `sudo apt-get install -y curl` (Debian, Ubuntu, Mint) or install `curl` with your system's package manager, then paste the line again |
+| `checksum does not match` | The download was damaged. Nothing was installed. Paste the line again |
+| Red text mentioning a release (Windows) | Your connection failed or the download is not available yet. Try again in a few minutes |
+| It asks for your password (Linux) | Only happens on processors other than the common x86-64 type, where Status Quo must be built on your machine and needs a few system packages. Type your password; nothing else is asked |
+| Anything else | See [When something looks off](#8-when-something-looks-off) |
+
+**Remove it any time.** Your settings and history stay on your computer.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.sh | bash -s -- --uninstall
+```
+
+On Windows: `& "$env:LOCALAPPDATA\status-quo\bin\status-quo.exe" uninstall`
+
+Good to know: Status Quo only *reads* the files that Claude, Codex and GitHub already saved on your computer; it sends nothing anywhere. It runs on Linux and Windows. It is not available for macOS.
+
+---
+
+# A guided tour
 
 > *What if the numbers you keep checking were simply there, on your desktop, without opening anything?*
 
@@ -9,7 +62,7 @@ This page teaches Status Quo the way a good lecture would: one idea at a time, a
 | | Chapter | You will be able to |
 |---|---|---|
 | 1 | [The big picture](#1-the-big-picture) | explain how Status Quo works in one sentence |
-| 2 | [Put it on your computer](#2-put-it-on-your-computer) | install it on Linux or Windows, in one command |
+| 2 | [Other ways to install](#2-put-it-on-your-computer) | download by hand, build it yourself, or install step by step |
 | 3 | [Your first minute](#3-your-first-minute) | move, resize and style widgets |
 | 4 | [The widgets](#4-the-widgets) | pick the right widget for each number |
 | 5 | [Plug in your accounts](#5-plug-in-your-accounts) | show more than one Claude, Codex or GitHub account |
@@ -36,19 +89,7 @@ Nothing is sent anywhere. There are no analytics, no generated summaries and no 
 
 ## 2. Put it on your computer
 
-**One paste.** Copy one line into a terminal. There is nothing to clone and no Rust to install: it downloads the program from the latest [release](https://github.com/yujideluca/status-quo/releases/latest), checks its SHA-256 checksum, installs it for your user only and starts it.
-
-```sh
-# Linux (x86_64; on other processors it builds from source instead)
-curl -fsSL https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.sh | bash
-```
-
-```powershell
-# Windows 10 or 11 (PowerShell, no administrator rights)
-irm https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.ps1 | iex
-```
-
-Add `-s -- --dry-run` after `bash` on Linux (`... | bash -s -- --dry-run`) to see every step without doing it, or `-s -- --uninstall` to remove it. Prefer to download by hand? The same files are on the Releases page: `status-quo-linux-x86_64.tar.gz` (the program plus `install.sh`) and `status-quo-setup.exe` (double-click, one file). The program loads the system's drawing libraries (X11 or Wayland, OpenGL) when it starts; every desktop has them, and `status-quo doctor` names any that is missing. The compatibility report is also a command you can run any time: `status-quo doctor`.
+**The fastest way is the one-line install at the top of this page.** If you would rather download the files yourself, open the [Releases page](https://github.com/yujideluca/status-quo/releases/latest) and take `status-quo-linux-x86_64.tar.gz` (Linux: unpack it, then run `bash install.sh` inside) or `status-quo-setup.exe` (Windows: double-click it). Add `--dry-run` to any installer to see every step without doing it. The program loads the system's drawing libraries (X11 or Wayland, OpenGL) when it starts; every desktop has them, and `status-quo doctor` names any that is missing.
 
 **Building it yourself: one command.** It checks your computer, installs what is missing, builds the program, installs it for your user only, starts it and prints a compatibility report.
 

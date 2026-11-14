@@ -125,13 +125,12 @@ td code,.say code{color:var(--rose-hi)}
     <div class="door"><h3>Linux · GNOME on Wayland</h3><p>An ordinary window.</p></div>
     <div class="door"><h3>Windows 10 and 11</h3><p>An ordinary window, no administrator rights.</p></div>
   </div>
-  <div class="say"><p><b>The fast way:</b> one command checks your computer, installs what is missing, builds or unpacks the program, installs it for your user only, starts it and prints a compatibility report.</p></div>
-<pre><button type="button">copy</button><span class="c"># Linux: Debian/Ubuntu, Fedora, Arch and openSUSE families (sudo only for packages)</span>
-git clone https://github.com/yujideluca/status-quo.git &amp;&amp; cd status-quo
-bash tools/install.sh</pre>
-<pre><button type="button">copy</button><span class="c"># Windows: double-click the one file, no administrator rights</span>
-status-quo-setup.exe</pre>
-  <div class="say"><p>Add <code>--dry-run</code> to see every step without doing it, <code>--check-only</code> (Linux) or <code>--check</code> (Windows) to only look, <code>--uninstall</code> to remove it. The report is also a command: <code>status-quo doctor</code>. The setup file comes with each tagged release, and from every CI run as an artifact.</p></div>
+  <div class="say"><p><b>The fast way: copy one line, paste it in a terminal, press Enter.</b> No GitHub knowledge, no Rust. It downloads Status Quo, checks the download, installs it for your user only and opens it. Linux: press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd>. Windows: Start, type <code>PowerShell</code>, Enter.</p></div>
+<pre><button type="button">copy</button><span class="c"># Linux</span>
+curl -fsSL https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.sh | bash</pre>
+<pre><button type="button">copy</button><span class="c"># Windows (PowerShell)</span>
+irm https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.ps1 | iex</pre>
+  <div class="say"><p>Add <code>--dry-run</code> to see every step without doing it, <code>--check-only</code> (Linux) or <code>--check</code> (Windows) to only look, <code>--uninstall</code> to remove it. The report is also a command: <code>status-quo doctor</code>.</p></div>
   <div class="say"><p><b>By hand</b>, if you like to watch each step:</p></div>
 <pre><button type="button">copy</button><span class="c"># Linux. Rust 1.87+ from rustup.rs, then the drawing libraries (Debian/Ubuntu):</span>
 sudo apt-get install -y pkg-config libx11-dev libxkbcommon-dev libwayland-dev libgl1-mesa-dev
