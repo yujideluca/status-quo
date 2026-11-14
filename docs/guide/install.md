@@ -4,6 +4,18 @@ Back to the [tour](../../README.md). Two automatic installers do everything on t
 
 ## The automatic installers
 
+### One paste: `tools/get.sh` and `tools/get.ps1`
+
+One line in a terminal, nothing to clone, no Rust. On Linux (`tools/get.sh`) it downloads `status-quo-linux-x86_64.tar.gz` from the latest release, checks its SHA-256 checksum and runs the `install.sh` inside it; when there is no prebuilt package for the machine (no release yet, or a processor other than x86_64) it runs the source installer below instead. On Windows (`tools/get.ps1`) it downloads `status-quo-setup.exe`, checks its checksum and runs it. Options pass through to the installer that runs: `... | bash -s -- --dry-run`.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.sh | bash
+```
+
+```powershell
+irm https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.ps1 | iex
+```
+
 ### Plug and play: the release downloads
 
 The [Releases page](https://github.com/yujideluca/status-quo/releases/latest) carries ready-made files, built by CI from the tagged commit. You need no Rust, compiler or source.

@@ -36,18 +36,19 @@ Nothing is sent anywhere. There are no analytics, no generated summaries and no 
 
 ## 2. Put it on your computer
 
-**Plug and play: download, no Rust needed.** Open the [Releases page](https://github.com/yujideluca/status-quo/releases/latest) and take the file for your system. It carries the program ready to run; it installs for your user only and starts it.
+**One paste.** Copy one line into a terminal. There is nothing to clone and no Rust to install: it downloads the program from the latest [release](https://github.com/yujideluca/status-quo/releases/latest), checks its SHA-256 checksum, installs it for your user only and starts it.
 
 ```sh
-# Linux (x86_64): unpack, run the installer inside
-tar -xzf status-quo-linux-x86_64.tar.gz && bash status-quo-linux-x86_64/install.sh
+# Linux (x86_64; on other processors it builds from source instead)
+curl -fsSL https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.sh | bash
 ```
 
-```text
-Windows: double-click  status-quo-setup.exe   (one file, no administrator rights)
+```powershell
+# Windows 10 or 11 (PowerShell, no administrator rights)
+irm https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.ps1 | iex
 ```
 
-`status-quo-linux-x86_64.tar.gz` (the program plus `install.sh`) and `status-quo-setup.exe` are attached to each tagged release by CI. The program loads the system's drawing libraries (X11 or Wayland, OpenGL) when it starts; every desktop has them, and `status-quo doctor` names any that is missing. Add `--dry-run` to either installer to see every step without doing it, `--uninstall` to remove it. The compatibility report is also a command you can run any time: `status-quo doctor`.
+Add `-s -- --dry-run` after `bash` on Linux (`... | bash -s -- --dry-run`) to see every step without doing it, or `-s -- --uninstall` to remove it. Prefer to download by hand? The same files are on the Releases page: `status-quo-linux-x86_64.tar.gz` (the program plus `install.sh`) and `status-quo-setup.exe` (double-click, one file). The program loads the system's drawing libraries (X11 or Wayland, OpenGL) when it starts; every desktop has them, and `status-quo doctor` names any that is missing. The compatibility report is also a command you can run any time: `status-quo doctor`.
 
 **Building it yourself: one command.** It checks your computer, installs what is missing, builds the program, installs it for your user only, starts it and prints a compatibility report.
 

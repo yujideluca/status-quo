@@ -24,6 +24,7 @@ jobs:
           cp LICENSE README.md pkg/status-quo-linux-x86_64/
           chmod +x pkg/status-quo-linux-x86_64/install.sh pkg/status-quo-linux-x86_64/status-quo
           tar -C pkg -czf status-quo-linux-x86_64.tar.gz status-quo-linux-x86_64
+          sha256sum status-quo-linux-x86_64.tar.gz > status-quo-linux-x86_64.tar.gz.sha256
       - name: Smoke test the unpacked package
         run: |
           tar -xzf status-quo-linux-x86_64.tar.gz -C "$RUNNER_TEMP"
@@ -37,7 +38,7 @@ jobs:
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
             || gh release create "$GITHUB_REF_NAME" --title "Status Quo $GITHUB_REF_NAME" --generate-notes \
             || sleep 5
-          gh release upload "$GITHUB_REF_NAME" status-quo-linux-x86_64.tar.gz --clobber
+          gh release upload "$GITHUB_REF_NAME" status-quo-linux-x86_64.tar.gz status-quo-linux-x86_64.tar.gz.sha256 --clobber
   windows-installer:
     runs-on: windows-latest
     timeout-minutes: 60
@@ -61,4 +62,6 @@ jobs:
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
             || gh release create "$GITHUB_REF_NAME" --title "Status Quo $GITHUB_REF_NAME" --generate-notes \
             || sleep 5
-          gh release upload "$GITHUB_REF_NAME" target/release/status-quo-setup.exe --clobber
+          cd target/release
+          sha256sum status-quo-setup.exe > status-quo-setup.exe.sha256
+          gh release upload "$GITHUB_REF_NAME" status-quo-setup.exe status-quo-setup.exe.sha256 --clobber

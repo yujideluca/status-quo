@@ -203,3 +203,109 @@ fn the_prebuilt_installer_refuses_a_package_without_the_program_and_unknown_opti
     let (ok, text) = run_prebuilt("prebuilt-bad", true, &["--nonsense"]);
     assert!(!ok && text.contains("unknown option"), "{text}");
 }
+
+fn get_script() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tools/get.sh")
+}
+fn sha256_of(file: &std::path::Path) -> String {
+    let out = Command::new("sha256sum").arg(file).output().unwrap();
+    String::from_utf8_lossy(&out.stdout)
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_string()
+}
+/// A fake "latest release" folder with a package whose program is a stub, reached by file://.
+fn fake_release(dir: &std::path::Path, good_checksum: bool) -> PathBuf {
+    let rel = dir.join("release");
+    let pkg = dir.join("pkg/status-quo-linux-x86_64");
+    fs::create_dir_all(&rel).unwrap();
+    fs::create_dir_all(&pkg).unwrap();
+    fs::copy(prebuilt_script(), pkg.join("install.sh")).unwrap();
+    fs::write(pkg.join("status-quo"), "#!/bin/sh\nexit 0\n").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(pkg.join("status-quo"), fs::Permissions::from_mode(0o755)).unwrap();
+    let tar = rel.join("status-quo-linux-x86_64.tar.gz");
+    let ok = Command::new("tar")
+        .args(["-czf"])
+        .arg(&tar)
+        .arg("-C")
+        .arg(dir.join("pkg"))
+        .arg("status-quo-linux-x86_64")
+        .status()
+        .unwrap()
+        .success();
+    assert!(ok);
+    let sum = if good_checksum {
+        sha256_of(&tar)
+    } else {
+        "0".repeat(64)
+    };
+    fs::write(
+        rel.join("status-quo-linux-x86_64.tar.gz.sha256"),
+        format!("{sum}  status-quo-linux-x86_64.tar.gz\n"),
+    )
+    .unwrap();
+    rel
+}
+fn run_get(dir: &std::path::Path, base: &str, args: &[&str]) -> (bool, String) {
+    let out = Command::new("bash")
+        .arg(get_script())
+        .args(args)
+        .env("SQ_RELEASE_BASE", base)
+        .env(
+            "SQ_RAW_BASE",
+            format!("file://{}/../../tools", env!("CARGO_MANIFEST_DIR")),
+        )
+        .env("SQ_ASSUME_MISSING_DEPS", "0")
+        .env("HOME", dir.join("home"))
+        .env_remove("WAYLAND_DISPLAY")
+        .env_remove("DISPLAY")
+        .output()
+        .unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (out.status.success(), text)
+}
+
+// REQ SQ-46
+#[test]
+fn one_paste_downloads_verifies_and_runs_the_release_package() {
+    let dir = scratch("get-ok");
+    let rel = fake_release(&dir, true);
+    let (ok, text) = run_get(&dir, &format!("file://{}", rel.display()), &["--dry-run"]);
+    assert!(ok, "{text}");
+    assert!(text.contains("checksum ok"), "{text}");
+    assert!(text.contains("status-quo install"), "{text}");
+    assert!(!text.contains("cargo"), "{text}");
+}
+
+// REQ SQ-46
+#[test]
+fn one_paste_refuses_a_package_whose_checksum_does_not_match() {
+    let dir = scratch("get-bad");
+    let rel = fake_release(&dir, false);
+    let (ok, text) = run_get(&dir, &format!("file://{}", rel.display()), &["--dry-run"]);
+    assert!(!ok, "{text}");
+    assert!(text.contains("checksum"), "{text}");
+    assert!(!text.contains("status-quo install"), "{text}");
+}
+
+// REQ SQ-46
+#[test]
+fn one_paste_falls_back_to_the_source_installer_when_no_release_exists() {
+    let dir = scratch("get-none");
+    let empty = dir.join("nothing");
+    fs::create_dir_all(&empty).unwrap();
+    let (ok, text) = run_get(
+        &dir,
+        &format!("file://{}", empty.display()),
+        &["--dry-run", "--no-deps"],
+    );
+    assert!(ok, "{text}");
+    assert!(text.contains("no prebuilt package"), "{text}");
+    assert!(text.contains("1/6") && text.contains("6/6"), "{text}");
+}

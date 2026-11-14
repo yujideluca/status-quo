@@ -320,3 +320,28 @@ fn every_release_carries_the_prebuilt_packages_and_the_docs_point_to_them() {
         );
     }
 }
+
+// REQ SQ-46
+#[test]
+fn the_readme_starts_with_the_two_one_paste_commands_and_they_are_real() {
+    let readme = read("README.md");
+    let linux = "curl -fsSL https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.sh | bash";
+    let windows =
+        "irm https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.ps1 | iex";
+    assert!(
+        readme.contains(linux),
+        "README lacks the Linux one-paste line"
+    );
+    assert!(
+        readme.contains(windows),
+        "README lacks the Windows one-paste line"
+    );
+    assert!(
+        readme.find(linux).unwrap() < readme.find("git clone").unwrap(),
+        "the one-paste line must come before any clone"
+    );
+    assert!(read("tools/get.sh").contains("sha256sum"));
+    assert!(read("tools/get.ps1").contains("status-quo-setup.exe"));
+    assert!(read("docs/guide/install.md").contains("tools/get.sh"));
+    assert!(read(".github/workflows/release.yml").contains("status-quo-linux-x86_64.tar.gz.sha256"));
+}
