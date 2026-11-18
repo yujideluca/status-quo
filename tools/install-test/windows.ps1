@@ -135,7 +135,11 @@ Write-Host 'default: no title bar, on the desktop background'
 # The other window must stay in front, and the screen must show it where the two overlap.
 function BehindOtherWindows($label) {
     $place = New-Object SqTest.Win+Rect
-    $panel = [SqTest.Win]::PanelWindow([uint32](Panel | Select-Object -First 1).Id, [ref]$place)
+    $panel = [IntPtr]::Zero
+    foreach ($process in @(Panel)) {
+        $panel = [SqTest.Win]::PanelWindow([uint32]$process.Id, [ref]$place)
+        if ($panel -ne [IntPtr]::Zero) { break }
+    }
     if ($panel -eq [IntPtr]::Zero) { Fail "$label`: the panel window was not found" }
     $width = $place.Right - $place.Left; $height = $place.Bottom - $place.Top
     $other = New-Object Windows.Forms.Form
