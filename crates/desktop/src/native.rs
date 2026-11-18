@@ -19,7 +19,7 @@ pub fn level(layer: Layer) -> egui::WindowLevel {
 }
 #[cfg(not(target_os = "linux"))]
 pub fn capabilities() -> String {
-    "Windows: ordinary window; it can stay on top or behind other windows (Window layer setting)."
+    "Windows: the Window layer setting keeps it behind or above other windows; drag the empty part of the top row to move it."
         .into()
 }
 #[cfg(target_os = "linux")]

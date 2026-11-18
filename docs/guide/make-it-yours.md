@@ -36,8 +36,9 @@ Readable formats: PNG, JPEG, BMP and WebP. Not supported: JPEG XL and AVIF pictu
 | Setting | Where | Meaning |
 |---|---|---|
 | Window layer | Customize → Desktop behavior | Behind (default), Normal or Above other windows |
+| Floating window | same, or `status-quo floating on` / `off` in a terminal | off by default: the tray sits on the desktop background without a title bar. On: an ordinary window you can move, minimize and close. The tray restarts by itself when you save |
 | Start at login | same | on by default |
-| `STATUS_QUO_HOST` | environment | force `layer-shell`, `x11` or `window` when it can work |
+| `STATUS_QUO_HOST` | environment | force `layer-shell`, `x11`, `windows-desktop` or `window` when it can work |
 | `STATUS_QUO_ANCHOR` | environment | corner or edge for the layer-shell host: `top`, `bottom`, `left`, `right` or a pair like `bottom-left` (default `top-right`) |
 
 Customization and screenshots always use an ordinary window, because the desktop-layer host has no keyboard input yet.

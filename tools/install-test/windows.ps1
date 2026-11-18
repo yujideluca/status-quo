@@ -54,6 +54,54 @@ Write-Host $report
 if ($code -ne 0) { Fail 'the compatibility check reports a blocking problem' }
 if ($report -notmatch 'Ready to run|Everything is ready') { Fail 'the compatibility check printed no verdict' }
 
+Write-Host "`n######## The panel sits on the desktop background; the floating window is a setting (SQ-48)"
+if ($report -notmatch 'windows-desktop') { Fail 'the compatibility check does not report the desktop placement' }
+Add-Type -Namespace SqTest -Name Win -MemberDefinition @'
+public delegate bool EnumProc(System.IntPtr hwnd, System.IntPtr lParam);
+[DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc callback, System.IntPtr lParam);
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(System.IntPtr hwnd, out uint pid);
+[DllImport("user32.dll")] public static extern bool IsWindowVisible(System.IntPtr hwnd);
+[DllImport("user32.dll")] public static extern int GetWindowLong(System.IntPtr hwnd, int index);
+[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(System.IntPtr hwnd, System.Text.StringBuilder text, int max);
+public static string Panels() {
+    var found = new System.Collections.Generic.List<string>();
+    EnumWindows(delegate(System.IntPtr hwnd, System.IntPtr l) {
+        var text = new System.Text.StringBuilder(256);
+        GetWindowText(hwnd, text, 256);
+        if (IsWindowVisible(hwnd) && text.ToString() == "Status Quo") {
+            uint pid; GetWindowThreadProcessId(hwnd, out pid);
+            found.Add(pid + ":" + GetWindowLong(hwnd, -16));
+        }
+        return true;
+    }, System.IntPtr.Zero);
+    return string.Join(",", found.ToArray());
+}
+'@
+# WS_CAPTION (0x00C00000) is the title bar of an ordinary window.
+function TitleBar {
+    $ids = @(Panel | ForEach-Object { $_.Id })
+    foreach ($entry in ([SqTest.Win]::Panels() -split ',' | Where-Object { $_ })) {
+        $processId, $style = $entry -split ':'
+        if ($ids -contains [int]$processId) { return (([int]$style -band 0x00C00000) -eq 0x00C00000) }
+    }
+    return $null
+}
+function WaitTitleBar($wanted) {
+    foreach ($second in 1..30) { if ((TitleBar) -eq $wanted) { return $true }; Start-Sleep -Seconds 1 }
+    return $false
+}
+if (-not (WaitTitleBar $false)) { Fail "after the install the panel is not a frameless window on the desktop (title bar: $(TitleBar))" }
+Write-Host 'default: no title bar, on the desktop background'
+$said = & $installed floating on | Out-String
+Write-Host $said
+if (-not (WaitTitleBar $true)) { Fail 'with the Floating window setting on, the panel did not become an ordinary window' }
+Write-Host 'Floating window on: an ordinary window with a title bar'
+$said = & $installed floating off | Out-String
+Write-Host $said
+if (-not (WaitTitleBar $false)) { Fail 'with the Floating window setting off, the panel did not go back to the desktop background' }
+Write-Host 'Floating window off: back on the desktop background'
+if ((Panel).Count -eq 0) { Fail 'the panel is not running after switching the setting' }
+
 Write-Host "`n######## Uninstall, with the line of the README"
 $readme = Join-Path $PSScriptRoot '..\..\README.md'
 $remove = @(Get-Content $readme | Where-Object { $_ -match '^& "\$env:LOCALAPPDATA.*status-quo\.exe" uninstall' })[0]

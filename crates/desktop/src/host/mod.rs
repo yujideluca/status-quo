@@ -1,4 +1,4 @@
-//! Compatibility layer: picks how the tray is placed on this Linux desktop.
+//! Compatibility layer: picks how the tray is placed on this desktop (Linux and Windows).
 //!
 //! Widgets, tray and collector never see this module. A backend only decides how
 //! one drawing surface is created, anchored, stacked and reported.
@@ -16,7 +16,10 @@ pub enum Backend {
     LayerShell,
     /// X11 window without frame, kept below other windows, on every workspace, off the taskbar.
     X11Desktop,
-    /// Ordinary framed window. Works everywhere; cannot sit behind other windows reliably.
+    /// Windows: window without frame or taskbar button, kept below other windows.
+    WindowsDesktop,
+    /// Ordinary framed window. Works everywhere. Used when the user asks for a floating
+    /// window, and where nothing else is possible.
     Window,
 }
 
@@ -25,6 +28,7 @@ impl Backend {
         match self {
             Backend::LayerShell => "layer-shell",
             Backend::X11Desktop => "x11-desktop",
+            Backend::WindowsDesktop => "windows-desktop",
             Backend::Window => "window",
         }
     }
@@ -32,7 +36,8 @@ impl Backend {
         match text.trim().to_ascii_lowercase().as_str() {
             "layer" | "layer-shell" | "wayland" => Some(Backend::LayerShell),
             "x11" | "x11-desktop" => Some(Backend::X11Desktop),
-            "window" | "plain" => Some(Backend::Window),
+            "windows-desktop" | "windows" => Some(Backend::WindowsDesktop),
+            "window" | "plain" | "floating" => Some(Backend::Window),
             _ => None,
         }
     }
@@ -47,6 +52,8 @@ pub struct Probe {
     pub x11_display: bool,
     /// The session itself is X11 (not Wayland with XWayland).
     pub x11_session: bool,
+    /// This is Windows: a frameless window can be kept below the others.
+    pub windows: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -57,10 +64,13 @@ pub struct Selection {
 }
 
 /// Choose a backend. `forced` comes from `STATUS_QUO_HOST` and wins when it can work.
-pub fn select(forced: Option<Backend>, probe: &Probe) -> Selection {
+/// The tray sits on the desktop background wherever the system allows it; `floating` is the
+/// user's setting that asks for an ordinary window instead (SQ-48).
+pub fn select(forced: Option<Backend>, probe: &Probe, floating: bool) -> Selection {
     let possible = |backend: Backend| match backend {
         Backend::LayerShell => probe.layer_shell,
         Backend::X11Desktop => probe.x11_display,
+        Backend::WindowsDesktop => probe.windows,
         Backend::Window => true,
     };
     let mut prefix = String::new();
@@ -73,20 +83,35 @@ pub fn select(forced: Option<Backend>, probe: &Probe) -> Selection {
         }
         prefix = format!("STATUS_QUO_HOST={} is not available here; ", backend.name());
     }
-    let (backend, why) = if probe.layer_shell {
+    let (backend, why) = if floating {
+        (
+            Backend::Window,
+            "the Floating window setting is on (Customize, Desktop behavior).",
+        )
+    } else if probe.layer_shell {
         (
             Backend::LayerShell,
             "the compositor offers layer-shell, so widgets sit on the desktop layer.",
         )
-    } else if probe.x11_session && probe.x11_display {
+    } else if probe.x11_display && probe.x11_session {
         (
             Backend::X11Desktop,
             "X11 session: frameless window kept below others, on every workspace.",
         )
+    } else if probe.x11_display {
+        (
+            Backend::X11Desktop,
+            "Wayland without layer-shell (such as GNOME): frameless window kept below others, through XWayland.",
+        )
+    } else if probe.windows {
+        (
+            Backend::WindowsDesktop,
+            "Windows: frameless window kept below others, without a taskbar button.",
+        )
     } else {
         (
             Backend::Window,
-            "no layer-shell and no X11 session: ordinary window; it cannot stay behind other windows.",
+            "no layer-shell and no X display: ordinary window; it cannot be placed on the desktop background here.",
         )
     };
     Selection {
@@ -98,8 +123,11 @@ pub fn select(forced: Option<Backend>, probe: &Probe) -> Selection {
 /// Read the real session. Never fails: a missing piece only turns a capability off.
 #[cfg(not(target_os = "linux"))]
 pub fn probe_session() -> Probe {
-    // Windows and macOS have neither layer-shell nor X11: the tray is an ordinary window there.
-    Probe::default()
+    // Windows has neither layer-shell nor X11; its own desktop backend is used.
+    Probe {
+        windows: cfg!(windows),
+        ..Probe::default()
+    }
 }
 #[cfg(target_os = "linux")]
 pub fn probe_session() -> Probe {
@@ -108,6 +136,7 @@ pub fn probe_session() -> Probe {
         layer_shell: std::env::var_os("WAYLAND_DISPLAY").is_some() && layer::available(),
         x11_display: std::env::var_os("DISPLAY").is_some() && x11rb::connect(None).is_ok(),
         x11_session: session.eq_ignore_ascii_case("x11"),
+        windows: false,
     }
 }
 
@@ -175,55 +204,83 @@ pub fn surface_size(saved: Option<(f32, f32)>) -> (u32, u32) {
 mod tests {
     use super::*;
 
+    fn probe(layer_shell: bool, x11_display: bool, x11_session: bool, windows: bool) -> Probe {
+        Probe {
+            layer_shell,
+            x11_display,
+            x11_session,
+            windows,
+        }
+    }
+
     // REQ SQ-26 SQ-22: backend choice follows the real session and reports fallbacks.
     #[test]
     fn layer_shell_is_preferred_when_the_compositor_offers_it() {
-        let probe = Probe {
-            layer_shell: true,
-            x11_display: true,
-            x11_session: false,
-        };
-        let chosen = select(None, &probe);
+        let chosen = select(None, &probe(true, true, false, false), false);
         assert_eq!(chosen.backend, Backend::LayerShell);
         assert!(chosen.note.contains("layer-shell"));
     }
 
-    // REQ SQ-26 SQ-22
+    // REQ SQ-48 SQ-26: without the Floating window setting, every system that can place the
+    // tray on the desktop background does so; an ordinary window is only the last resort.
     #[test]
-    fn x11_session_uses_the_x11_backend_and_wayland_without_layer_shell_uses_a_window() {
-        let x11 = Probe {
-            layer_shell: false,
-            x11_display: true,
-            x11_session: true,
-        };
-        assert_eq!(select(None, &x11).backend, Backend::X11Desktop);
-        let gnome_wayland = Probe {
-            layer_shell: false,
-            x11_display: true,
-            x11_session: false,
-        };
-        let chosen = select(None, &gnome_wayland);
-        assert_eq!(chosen.backend, Backend::Window);
-        assert!(chosen.note.contains("cannot stay behind"));
-        assert_eq!(select(None, &Probe::default()).backend, Backend::Window);
+    fn the_desktop_background_is_the_default_on_every_system() {
+        let x11 = probe(false, true, true, false);
+        assert_eq!(select(None, &x11, false).backend, Backend::X11Desktop);
+        let gnome_wayland = probe(false, true, false, false);
+        let chosen = select(None, &gnome_wayland, false);
+        assert_eq!(chosen.backend, Backend::X11Desktop);
+        assert!(chosen.note.contains("XWayland"));
+        let windows = probe(false, false, false, true);
+        let chosen = select(None, &windows, false);
+        assert_eq!(chosen.backend, Backend::WindowsDesktop);
+        assert!(chosen.note.contains("without a taskbar button"));
+        let nothing = select(None, &Probe::default(), false);
+        assert_eq!(nothing.backend, Backend::Window);
+        assert!(nothing
+            .note
+            .contains("cannot be placed on the desktop background"));
+    }
+
+    // REQ SQ-48: the Floating window setting gives an ordinary window on every system.
+    #[test]
+    fn the_floating_setting_gives_an_ordinary_window_everywhere() {
+        for session in [
+            probe(true, true, false, false),
+            probe(false, true, true, false),
+            probe(false, true, false, false),
+            probe(false, false, false, true),
+            Probe::default(),
+        ] {
+            let chosen = select(None, &session, true);
+            assert_eq!(chosen.backend, Backend::Window, "{session:?}");
+            assert!(chosen.note.contains("Floating window setting"));
+        }
     }
 
     // REQ SQ-26: a forced choice that cannot work falls back and says so.
     #[test]
     fn forced_backend_is_honored_only_when_possible() {
-        let probe = Probe {
-            layer_shell: false,
-            x11_display: true,
-            x11_session: false,
-        };
+        let session = probe(false, true, false, false);
         assert_eq!(
-            select(Some(Backend::X11Desktop), &probe).backend,
+            select(Some(Backend::X11Desktop), &session, false).backend,
             Backend::X11Desktop
         );
-        let fallback = select(Some(Backend::LayerShell), &probe);
-        assert_eq!(fallback.backend, Backend::Window);
+        assert_eq!(
+            select(Some(Backend::Window), &session, false).backend,
+            Backend::Window
+        );
+        let fallback = select(Some(Backend::LayerShell), &session, false);
+        assert_eq!(fallback.backend, Backend::X11Desktop);
         assert!(fallback.note.contains("is not available here"));
+        let fallback = select(Some(Backend::WindowsDesktop), &session, false);
+        assert_eq!(fallback.backend, Backend::X11Desktop);
         assert_eq!(Backend::parse("Layer-Shell"), Some(Backend::LayerShell));
+        assert_eq!(
+            Backend::parse("windows-desktop"),
+            Some(Backend::WindowsDesktop)
+        );
+        assert_eq!(Backend::parse("floating"), Some(Backend::Window));
         assert_eq!(Backend::parse("nonsense"), None);
     }
 

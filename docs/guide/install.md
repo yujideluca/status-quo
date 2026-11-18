@@ -146,18 +146,19 @@ target/release/status-quo install
 
 ### How it sits on your desktop
 
-Status Quo asks the session what it can do and picks the best of three hosts. It tells you which one and why (Customize shows the line).
+Status Quo asks the session what it can do and picks the best host. By default the tray sits on the desktop background on every system; an ordinary window with a title bar is a setting (**Customize → Desktop behavior → Floating window**, or `status-quo floating on` in a terminal; `status-quo floating off` puts it back). It tells you which one and why (Customize shows the line).
 
 | Your session | Host chosen | Result |
 |---|---|---|
 | The compositor offers the *layer-shell* protocol (KDE Plasma, Hyprland, sway) | layer-shell | frameless, on the desktop layer, below windows by default, anchored to a corner |
-| An X11 session | X11 hints | a frameless window kept below others, off the taskbar |
-| Anything else, for example GNOME on Wayland | window | an ordinary window |
+| An X11 session, or Wayland without layer-shell such as GNOME (through XWayland) | X11 hints | a frameless window kept below others, off the taskbar |
+| Windows 10 and 11 | Windows desktop | a frameless window kept below others, without a taskbar button |
+| The Floating window setting is on, or nothing above is possible | window | an ordinary window |
 
 Verified here: KDE Plasma on Wayland. The X11 and window hosts and the other layer-shell compositors follow the design and the protocol but were not run on real machines for this guide. Two variables override the choice when it can work:
 
 ```sh
-STATUS_QUO_HOST=window status-quo        # layer-shell, x11 or window
+STATUS_QUO_HOST=window status-quo        # layer-shell, x11, windows-desktop or window
 STATUS_QUO_ANCHOR=bottom-left status-quo # top, bottom, left, right, or a pair such as top-right (default)
 ```
 
@@ -175,7 +176,7 @@ cargo build --release --locked -p status-quo
 target\release\status-quo.exe install
 ```
 
-What is different on Windows: the tray is an ordinary window (use the *Window layer* setting to keep it behind or above others); the collector and panel talk through a private port on your own machine protected by a random token; CPU and memory come from Windows, every graphics card of any maker from the Windows performance counters (the ones Task Manager uses); the CPU temperature is **unavailable** because Windows offers none without a driver. No administrator rights are used.
+What is different on Windows: the tray is a frameless window kept below your other windows, with no taskbar button (drag the empty part of its top row to move it; the *Window layer* setting can put it above others; the *Show desktop* shortcut Win+D hides it like any window until you click a window again); the collector and panel talk through a private port on your own machine protected by a random token; CPU and memory come from Windows, every graphics card of any maker from the Windows performance counters (the ones Task Manager uses); the CPU temperature is **unavailable** because Windows offers none without a driver. No administrator rights are used.
 
 ## What `install` does
 

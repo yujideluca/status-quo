@@ -356,3 +356,22 @@ fn source_paths_accept_unix_home_windows_drive_and_unc_forms() {
         assert!(config.validate().is_err(), "accepted {bad}");
     }
 }
+
+// REQ SQ-48: the tray sits on the desktop background unless the user asks for a floating
+// window; settings written before the option existed load with it off, and it round-trips.
+#[test]
+fn the_floating_window_is_off_by_default_and_old_settings_still_load() {
+    assert!(!Config::default().floating);
+    let mut value = serde_json::to_value(Config::default()).unwrap();
+    value.as_object_mut().unwrap().remove("floating");
+    let old: Config = serde_json::from_value(value).unwrap();
+    assert!(!old.floating);
+    old.validate().unwrap();
+    let config = Config {
+        floating: true,
+        ..Config::default()
+    };
+    let again: Config = serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+    assert!(again.floating);
+    assert_eq!(again, config);
+}

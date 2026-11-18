@@ -19,6 +19,8 @@ pub struct Tray {
     pub connected: bool,
     /// Desktop-widget look: no tray background or title, only the widgets and two buttons.
     pub bare: bool,
+    /// The host is a frameless window the user can move by dragging the empty part of the header.
+    pub window_drag: bool,
     /// Colours of the current wallpaper, reported by the host (SQ-37).
     pub wallpaper: WallpaperColors,
     /// File access of the host for the folder navigator; `None` hides the Browse buttons.
@@ -64,6 +66,7 @@ impl Tray {
             capabilities: String::new(),
             connected: false,
             bare: false,
+            window_drag: false,
             wallpaper: WallpaperColors::Pending,
             browser: None,
             picker: None,
@@ -310,6 +313,14 @@ impl Tray {
                     }
                 });
             self.header_height = header.response.rect.height();
+            if self.window_drag
+                && header
+                    .response
+                    .interact(egui::Sense::drag())
+                    .drag_started_by(egui::PointerButton::Primary)
+            {
+                ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+            }
         }
         egui::CentralPanel::default()
             .frame(if bare || floating_toolbar {
@@ -813,6 +824,9 @@ impl Tray {
                         ui.selectable_value(&mut draft.layer, layer, format!("{layer:?}"));
                     }
                 });
+                ui.checkbox(&mut draft.floating, FLOATING_LABEL).on_hover_text(
+                    "Off: the tray sits on the desktop background, without a title bar. On: it is a normal window you can move, minimize and close. The tray restarts by itself when you save.",
+                );
                 ui.label(&self.capabilities);
                 ui.checkbox(&mut draft.navigation, "Enable links and project navigation");
                 ui.checkbox(&mut draft.autostart, "Start at login");
@@ -1843,6 +1857,8 @@ pub fn reset_label(reset: i64, now: i64) -> String {
     };
     format!("Resets {duration} · {}", timestamp_utc(reset))
 }
+/// Text of the Customize switch that turns the tray into an ordinary window (SQ-48).
+pub const FLOATING_LABEL: &str = "Floating window (a normal window with a title bar)";
 #[cfg(test)]
 mod tests {
     use super::*;

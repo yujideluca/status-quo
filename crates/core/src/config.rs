@@ -219,6 +219,9 @@ pub struct Config {
     pub widgets: Vec<WidgetInstance>,
     pub theme: Theme,
     pub layer: Layer,
+    /// Show the tray as an ordinary window with a title bar instead of placing it on the
+    /// desktop background. Off by default (SQ-48).
+    pub floating: bool,
     pub navigation: bool,
     pub autostart: bool,
     pub locked: bool,
@@ -238,6 +241,7 @@ impl Default for Config {
             widgets: vec![],
             theme: Theme::default(),
             layer: Layer::Behind,
+            floating: false,
             navigation: true,
             autostart: true,
             locked: true,

@@ -1192,3 +1192,20 @@ fn customize_swatches_show_the_applied_wallpaper_palette() {
     );
     assert_ne!(drawn.palette.accent, Theme::default().palette.accent);
 }
+// REQ SQ-48: the Floating window switch of Customize is saved with the other settings, and
+// cancelling leaves the tray on the desktop background.
+#[test]
+fn the_floating_window_switch_is_saved_by_customize_and_dropped_by_cancel() {
+    assert!(FLOATING_LABEL.starts_with("Floating window"));
+    let mut tray = Tray::new(Config::default());
+    tray.begin_customization();
+    tray.draft.as_mut().unwrap().floating = true;
+    tray.cancel_customization();
+    assert!(!tray.config.floating);
+    tray.begin_customization();
+    tray.draft.as_mut().unwrap().floating = true;
+    let ConfigAction::Replace(saved) = tray.save_customization().unwrap() else {
+        panic!("Customize saves the whole configuration");
+    };
+    assert!(saved.floating);
+}

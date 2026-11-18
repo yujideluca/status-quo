@@ -87,7 +87,11 @@ pub fn check_display(s: &Session) -> Check {
         return check(
             Level::Ok,
             "Display",
-            "Windows: the tray is an ordinary window",
+            if s.chosen.is_empty() {
+                "Windows".to_string()
+            } else {
+                s.chosen.to_string()
+            },
             None,
         );
     }
@@ -271,8 +275,18 @@ pub fn gather() -> Vec<Check> {
     } else {
         checks.push(check(Level::Ok, "System", system, None));
     }
-    let selection =
-        crate::host::select(crate::host::forced_backend(), &crate::host::probe_session());
+    let state = sq_collector::state_root();
+    // The saved Floating window setting decides between the desktop background and a window.
+    let floating = std::fs::read_to_string(state.join("config.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| v["config"]["floating"].as_bool())
+        .unwrap_or(false);
+    let selection = crate::host::select(
+        crate::host::forced_backend(),
+        &crate::host::probe_session(),
+        floating,
+    );
     checks.push(check_display(&Session {
         windows,
         wayland_display: std::env::var_os("WAYLAND_DISPLAY").is_some(),
@@ -288,7 +302,6 @@ pub fn gather() -> Vec<Check> {
             chosen: "",
         },
     ));
-    let state = sq_collector::state_root();
     checks.push(check_writable(&state));
     let sources = std::fs::read_to_string(state.join("config.json"))
         .ok()

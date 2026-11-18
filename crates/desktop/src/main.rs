@@ -1,4 +1,4 @@
-//! Desktop wrapper: Linux (Wayland layer-shell, X11, KDE first) and Windows 10/11 (ordinary window). Shared widgets/tray do not import this crate.
+//! Desktop wrapper: Linux (Wayland layer-shell, X11, KDE first) and Windows 10/11 (frameless window below the others). Shared widgets/tray do not import this crate.
 // A Windows program without a console window; `attach_console` gives it back when a terminal started it.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 mod doctor;
@@ -134,8 +134,46 @@ fn run() -> Result<(), String> {
             );
             return Ok(());
         }
+        // `status-quo floating on|off`: the Floating window switch of Customize, from a terminal.
+        Some("floating") => {
+            let on = match args.get(1).map(String::as_str) {
+                Some("on") => true,
+                Some("off") => false,
+                _ => {
+                    return Err("Use: status-quo floating on   or   status-quo floating off".into())
+                }
+            };
+            ensure_collector()?;
+            let client = Client::default_path();
+            let Reply::Configuration {
+                revision,
+                mut config,
+            } = client.request(Command::Configuration)?
+            else {
+                return Err("Configuration unavailable".into());
+            };
+            config.floating = on;
+            return match client.request(Command::Configure {
+                revision,
+                action: ConfigAction::Replace(config),
+            })? {
+                Reply::Configuration { .. } => {
+                    println!(
+                        "{}",
+                        if on {
+                            "Status Quo is now a floating window."
+                        } else {
+                            "Status Quo now sits on the desktop background."
+                        }
+                    );
+                    Ok(())
+                }
+                Reply::Error(error) => Err(error),
+                _ => Err("The setting was not saved".into()),
+            };
+        }
         Some("--help") | Some("help") => {
-            println!("Status Quo\n  status-quo                  Open the desktop panel\n  status-quo doctor           Check that this computer can run Status Quo\n  status-quo launch --verify  Start the panel in the background and confirm it stays up\n  status-quo stop             Close the panel (it opens again at the next login)\n  status-quo collect          Run the shared background collector\n  status-quo inspect          Read collector status as JSON\n  status-quo inspect --widgets Render widget models in a second Rust host\n  status-quo --screenshot PATH Capture this panel's framebuffer and exit\n  status-quo --customize      Open customization");
+            println!("Status Quo\n  status-quo                  Open the desktop panel\n  status-quo doctor           Check that this computer can run Status Quo\n  status-quo launch --verify  Start the panel in the background and confirm it stays up\n  status-quo stop             Close the panel (it opens again at the next login)\n  status-quo floating on|off  Show the panel as a normal window (on) or on the desktop background (off)\n  status-quo collect          Run the shared background collector\n  status-quo inspect          Read collector status as JSON\n  status-quo inspect --widgets Render widget models in a second Rust host\n  status-quo --screenshot PATH Capture this panel's framebuffer and exit\n  status-quo --customize      Open customization");
             return Ok(());
         }
         _ => {}
@@ -150,8 +188,17 @@ fn run() -> Result<(), String> {
         .private(0o600)
         .open(root.join("panel.lock"))
         .map_err(|e| e.to_string())?;
-    if lock.try_lock_exclusive().is_err() {
-        return Ok(());
+    // A panel that restarts itself (Floating window setting changed) hands over to this one:
+    // wait for the old one to let go instead of leaving at once.
+    let handover = std::env::var_os(HANDOVER).is_some();
+    std::env::remove_var(HANDOVER);
+    let mut tries = if handover { 100 } else { 1 };
+    while lock.try_lock_exclusive().is_err() {
+        tries -= 1;
+        if tries == 0 {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(100));
     }
     let Reply::Configuration { revision, config } =
         Client::default_path().request(Command::Configuration)?
@@ -175,8 +222,15 @@ fn run() -> Result<(), String> {
             note: "window: screenshot and customization use an ordinary window.".into(),
         }
     } else {
-        host::select(host::forced_backend(), &host::probe_session())
+        host::select(
+            host::forced_backend(),
+            &host::probe_session(),
+            config.floating,
+        )
     };
+    // The backend is fixed when the window is created, so the panel restarts itself when the
+    // Floating window setting changes. Not in the one-off screenshot and customization runs.
+    let restart_on_floating = screenshot.is_none() && !customize;
     eprintln!("Status Quo host: {}", selection.note);
     #[cfg(target_os = "linux")]
     if selection.backend == host::Backend::LayerShell {
@@ -192,6 +246,7 @@ fn run() -> Result<(), String> {
             });
         let ctx = egui::Context::default();
         let mut app = App::new(ctx.clone(), *config, revision, None, false);
+        app.restart_on_floating = restart_on_floating;
         app.tray.capabilities = format!("Layer-shell surface: {}", selection.note);
         app.tray.bare = true;
         let request = host::layer::Request {
@@ -219,6 +274,15 @@ fn run() -> Result<(), String> {
         .with_transparent(true)
         .with_decorations(framed)
         .with_window_level(layer);
+    let windows_desktop = selection.backend == host::Backend::WindowsDesktop;
+    if windows_desktop {
+        viewport = viewport.with_taskbar(false);
+    }
+    // First start of a frameless panel on Windows or through XWayland: nothing says where it
+    // goes, so it is put in the top right corner, like the layer-shell surface.
+    let place_default = !framed
+        && !config.geometry.contains_key("tray")
+        && (windows_desktop || std::env::var_os("WAYLAND_DISPLAY").is_some());
     if let Some(g) = config.geometry.get("tray") {
         viewport = viewport
             .with_position([g.x, g.y])
@@ -268,7 +332,10 @@ fn run() -> Result<(), String> {
                 );
                 app.tray.capabilities = format!("{note} {}", native::capabilities());
                 app.x11_hints_pending = desktop_hints;
-                app.tray.bare = desktop_hints;
+                app.tray.bare = !framed;
+                app.tray.window_drag = !framed;
+                app.place_default = place_default;
+                app.restart_on_floating = restart_on_floating;
                 Ok(Box::new(app))
             }),
         );
@@ -446,6 +513,11 @@ struct App {
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     x11_attempts: u8,
     last_size: Option<egui::Vec2>,
+    /// The Floating window setting this panel was started with.
+    floating: bool,
+    restart_on_floating: bool,
+    /// Put the window in the top right corner once (first start, no saved position).
+    place_default: bool,
 }
 impl App {
     fn new(
@@ -473,6 +545,7 @@ impl App {
             });
         }
         let layer = config.layer;
+        let floating = config.floating;
         let mut tray = Tray::new(config);
         tray.capabilities = native::capabilities();
         tray.browser = Some(std::sync::Arc::new(native::Folders));
@@ -497,6 +570,9 @@ impl App {
             x11_hints_pending: false,
             last_size: None,
             x11_attempts: 0,
+            floating,
+            restart_on_floating: false,
+            place_default: false,
         }
     }
     fn intent(&mut self, intent: Intent) {
@@ -615,6 +691,25 @@ impl App {
                 .any(follows_wallpaper),
             Ordering::Release,
         );
+        if self.floating != self.tray.config.floating {
+            self.floating = self.tray.config.floating;
+            if self.restart_on_floating {
+                if let Err(error) = restart_panel(ctx) {
+                    self.tray.error = Some(format!(
+                        "The setting is saved; close and open Status Quo to apply it ({error})"
+                    ));
+                }
+            }
+        }
+        if self.place_default && self.started.elapsed() >= Duration::from_millis(1500) {
+            let (monitor, outer) =
+                ctx.input(|i| (i.viewport().monitor_size, i.viewport().outer_rect));
+            if let (Some(monitor), Some(outer)) = (monitor, outer) {
+                self.place_default = false;
+                let x = (monitor.x - outer.width() - 16.0).max(0.0);
+                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(x, 16.0)));
+            }
+        }
         if self.layer != self.tray.config.layer {
             self.layer = self.tray.config.layer;
             ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(native::level(
@@ -702,6 +797,29 @@ impl App {
         if self.screenshot.is_some() {
             ctx.request_repaint_after(Duration::from_millis(250));
         }
+    }
+}
+/// Set for the panel that replaces a restarting one: it waits for the panel lock.
+const HANDOVER: &str = "STATUS_QUO_HANDOVER";
+/// Start this program again with the same arguments, so the new Floating window setting takes
+/// effect. On Linux the running process is replaced in place (the service manager keeps
+/// watching the same process); on Windows a new panel starts and this one closes.
+fn restart_panel(ctx: &egui::Context) -> Result<(), String> {
+    let program = std::env::current_exe().map_err(|e| e.to_string())?;
+    let mut command = std::process::Command::new(program);
+    command.args(std::env::args_os().skip(1)).env(HANDOVER, "1");
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let _ = ctx;
+        // Only returns when the program could not be started again.
+        Err(command.exec().to_string())
+    }
+    #[cfg(not(unix))]
+    {
+        command.spawn().map_err(|e| e.to_string())?;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        Ok(())
     }
 }
 fn follows_wallpaper(config: &Config) -> bool {
