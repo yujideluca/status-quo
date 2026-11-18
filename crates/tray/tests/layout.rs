@@ -1245,36 +1245,26 @@ fn the_drag_area_of_a_frameless_panel_leaves_the_header_buttons_clickable() {
         };
         frame(&mut tray, vec![]);
         frame(&mut tray, vec![]);
-        let mut opened = false;
-        'rows: for y in [8.0, 14.0, 20.0, 26.0] {
-            for step in 0..200 {
-                let pos = pos2(798.0 - step as f32 * 4.0, y);
-                let mut moved = frame(&mut tray, vec![Event::PointerMoved(pos)]);
-                moved |= frame(&mut tray, vec![button(pos, true)]);
-                moved |= frame(&mut tray, vec![button(pos, false)]);
-                if tray.draft.is_some() && !tray.editing {
-                    assert!(!moved, "the click on Customize also started a window move");
-                    opened = true;
-                    break 'rows;
-                }
-                // A click that opened something else (the Add widget menu, Edit tray) is undone.
-                tray.cancel_customization();
-                frame(
-                    &mut tray,
-                    vec![Event::Key {
-                        key: egui::Key::Escape,
-                        physical_key: None,
-                        pressed: true,
-                        repeat: false,
-                        modifiers: Default::default(),
-                    }],
-                );
-            }
-        }
+        // Customize is the last button of the row: a click right in the middle of its text.
+        let buttons = tray.header_buttons_rect();
+        assert!(buttons.width() > 100.0, "the top row has no buttons");
+        let pos = pos2(buttons.right() - 30.0, buttons.center().y);
+        let mut moved = frame(&mut tray, vec![Event::PointerMoved(pos)]);
+        moved |= frame(&mut tray, vec![button(pos, true)]);
+        moved |= frame(&mut tray, vec![button(pos, false)]);
         assert!(
-            opened,
-            "no click on the top row opened Customize (bare: {bare})"
+            tray.draft.is_some() && !tray.editing,
+            "a click in the middle of Customize did not open it (bare: {bare})"
         );
+        assert!(!moved, "the click on Customize also started a window move");
+        // A press on a button followed by a pull does not move the window either.
+        tray.cancel_customization();
+        frame(&mut tray, vec![]);
+        let to = pos2(pos.x - 60.0, pos.y + 40.0);
+        let mut moved = frame(&mut tray, vec![button(pos, true)]);
+        moved |= frame(&mut tray, vec![Event::PointerMoved(to)]);
+        moved |= frame(&mut tray, vec![button(to, false)]);
+        assert!(!moved, "a pull that started on a button moved the window");
         tray.cancel_customization();
         frame(&mut tray, vec![]);
         // The left end of a bare top row is empty: pressing and pulling there moves the window.

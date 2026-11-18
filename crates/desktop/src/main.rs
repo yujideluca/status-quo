@@ -731,10 +731,33 @@ impl App {
         if self.place_default && self.started.elapsed() >= Duration::from_millis(1500) {
             let (monitor, outer) =
                 ctx.input(|i| (i.viewport().monitor_size, i.viewport().outer_rect));
+            // Windows: the taskbar stays in front of the panel, so the panel must end above it.
+            #[cfg(windows)]
+            let area = host::windows::work_area().map(|a| {
+                let scale = ctx.native_pixels_per_point().unwrap_or(1.0).max(0.5);
+                egui::Rect::from_min_max(
+                    egui::pos2(a[0] as f32 / scale, a[1] as f32 / scale),
+                    egui::pos2(a[2] as f32 / scale, a[3] as f32 / scale),
+                )
+            });
+            #[cfg(not(windows))]
+            let area = work_area_unknown();
             if let (Some(monitor), Some(outer)) = (monitor, outer) {
                 self.place_default = false;
-                let x = (monitor.x - outer.width() - 16.0).max(0.0);
-                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(x, 16.0)));
+                let area =
+                    area.unwrap_or_else(|| egui::Rect::from_min_size(egui::Pos2::ZERO, monitor));
+                let size = egui::vec2(
+                    outer.width().min(area.width() - 32.0),
+                    outer.height().min(area.height() - 32.0),
+                );
+                if size != outer.size() {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
+                }
+                let x = (area.right() - size.x - 16.0).max(area.left());
+                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(
+                    x,
+                    area.top() + 16.0,
+                )));
             }
         }
         if self.layer != self.tray.config.layer {
@@ -831,6 +854,11 @@ const HANDOVER: &str = "STATUS_QUO_HANDOVER";
 /// Start this program again with the same arguments, so the new Floating window setting takes
 /// effect. On Linux the running process is replaced in place (the service manager keeps
 /// watching the same process); on Windows a new panel starts and this one closes.
+/// Off Windows nothing reports the free part of the screen: the whole screen is used.
+#[cfg(not(windows))]
+fn work_area_unknown() -> Option<egui::Rect> {
+    None
+}
 fn restart_panel(ctx: &egui::Context) -> Result<(), String> {
     let program = std::env::current_exe().map_err(|e| e.to_string())?;
     let mut command = std::process::Command::new(program);

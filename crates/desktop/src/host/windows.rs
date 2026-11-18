@@ -38,6 +38,7 @@ extern "system" {
         lparam: isize,
     ) -> isize;
     fn DefWindowProcW(window: isize, message: u32, wparam: usize, lparam: isize) -> isize;
+    fn SystemParametersInfoW(action: u32, param: u32, value: *mut [i32; 4], update: u32) -> i32;
     fn SetWindowPos(
         window: isize,
         insert_after: isize,
@@ -87,4 +88,12 @@ pub fn keep_behind(window: isize, behind: bool) {
             );
         }
     }
+}
+
+/// The part of the main screen not covered by the taskbar: left, top, right, bottom in pixels.
+pub fn work_area() -> Option<[i32; 4]> {
+    const SPI_GETWORKAREA: u32 = 0x0030;
+    let mut area = [0i32; 4];
+    let found = unsafe { SystemParametersInfoW(SPI_GETWORKAREA, 0, &mut area, 0) } != 0;
+    (found && area[2] > area[0] && area[3] > area[1]).then_some(area)
 }

@@ -23,6 +23,8 @@ pub struct Tray {
     pub window_drag: bool,
     /// Where the buttons of the top row were drawn in the last frame.
     header_buttons_rect: egui::Rect,
+    /// A window move was already asked for during the current press.
+    window_move_sent: bool,
     /// Colours of the current wallpaper, reported by the host (SQ-37).
     pub wallpaper: WallpaperColors,
     /// File access of the host for the folder navigator; `None` hides the Browse buttons.
@@ -70,6 +72,7 @@ impl Tray {
             bare: false,
             window_drag: false,
             header_buttons_rect: egui::Rect::NOTHING,
+            window_move_sent: false,
             wallpaper: WallpaperColors::Pending,
             browser: None,
             picker: None,
@@ -153,6 +156,10 @@ impl Tray {
         self.origin_applied = true;
     }
     /// Size the tray wants its surface to have, once it is a free canvas.
+    /// Where the buttons of the top row were drawn in the last frame.
+    pub fn header_buttons_rect(&self) -> egui::Rect {
+        self.header_buttons_rect
+    }
     pub fn desired_size(&self) -> Option<Vec2> {
         if self.editing || !layout::is_free(&self.config.widgets) {
             return None;
@@ -316,18 +323,30 @@ impl Tray {
                     }
                 });
             self.header_height = header.response.rect.height();
-            // Only a press on the empty part of the row moves the window: a window move
-            // started on a button would swallow the button's click.
-            if self.window_drag
-                && header
-                    .response
-                    .interact(egui::Sense::drag())
-                    .drag_started_by(egui::PointerButton::Primary)
-                && ctx
-                    .input(|i| i.pointer.press_origin())
-                    .is_some_and(|origin| !self.header_buttons_rect.expand(6.0).contains(origin))
-            {
-                ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+            // A frameless panel is moved by pressing the empty part of the top row and pulling.
+            // The pointer is read directly: an invisible drag area laid over the row would take
+            // the clicks away from the buttons under it. A press that starts on a button never
+            // moves the window: the window move would swallow the button's click.
+            if self.window_drag {
+                let row = header.response.rect;
+                let buttons = self.header_buttons_rect.expand(6.0);
+                let (pressed, pulling, origin) = ctx.input(|i| {
+                    (
+                        i.pointer.primary_pressed(),
+                        i.pointer.primary_down() && i.pointer.is_decidedly_dragging(),
+                        i.pointer.press_origin(),
+                    )
+                });
+                if pressed {
+                    self.window_move_sent = false;
+                }
+                if pulling
+                    && !self.window_move_sent
+                    && origin.is_some_and(|o| row.contains(o) && !buttons.contains(o))
+                {
+                    self.window_move_sent = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                }
             }
         }
         egui::CentralPanel::default()
