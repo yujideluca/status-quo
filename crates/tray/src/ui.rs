@@ -21,6 +21,8 @@ pub struct Tray {
     pub bare: bool,
     /// The host is a frameless window the user can move by dragging the empty part of the header.
     pub window_drag: bool,
+    /// Where the buttons of the top row were drawn in the last frame.
+    header_buttons_rect: egui::Rect,
     /// Colours of the current wallpaper, reported by the host (SQ-37).
     pub wallpaper: WallpaperColors,
     /// File access of the host for the folder navigator; `None` hides the Browse buttons.
@@ -67,6 +69,7 @@ impl Tray {
             connected: false,
             bare: false,
             window_drag: false,
+            header_buttons_rect: egui::Rect::NOTHING,
             wallpaper: WallpaperColors::Pending,
             browser: None,
             picker: None,
@@ -313,11 +316,16 @@ impl Tray {
                     }
                 });
             self.header_height = header.response.rect.height();
+            // Only a press on the empty part of the row moves the window: a window move
+            // started on a button would swallow the button's click.
             if self.window_drag
                 && header
                     .response
                     .interact(egui::Sense::drag())
                     .drag_started_by(egui::PointerButton::Primary)
+                && ctx
+                    .input(|i| i.pointer.press_origin())
+                    .is_some_and(|origin| !self.header_buttons_rect.expand(6.0).contains(origin))
             {
                 ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
             }
@@ -559,6 +567,7 @@ impl Tray {
                 }
             }
         });
+        self.header_buttons_rect = ui.min_rect();
     }
     fn apply_edits(&mut self, ops: Vec<EditOp>) {
         let Some(draft) = self.draft.as_mut().filter(|_| self.editing) else {

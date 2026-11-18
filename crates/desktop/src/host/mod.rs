@@ -4,6 +4,8 @@
 //! one drawing surface is created, anchored, stacked and reported.
 #[cfg(target_os = "linux")]
 pub mod layer;
+#[cfg(windows)]
+pub mod windows;
 #[cfg(target_os = "linux")]
 pub mod x11;
 

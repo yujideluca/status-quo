@@ -1209,3 +1209,85 @@ fn the_floating_window_switch_is_saved_by_customize_and_dropped_by_cancel() {
     };
     assert!(saved.floating);
 }
+// REQ SQ-48: a frameless panel is moved by dragging the empty part of its top row, and that
+// drag never starts on a button of the row: a window move would swallow the click. Real
+// pointer events are fed to the tray: a click along the top row must open Customize without
+// asking for a window move, and a press on the empty part must ask for one.
+#[test]
+fn the_drag_area_of_a_frameless_panel_leaves_the_header_buttons_clickable() {
+    use egui::{pos2, vec2, Event, PointerButton, RawInput, Rect, ViewportCommand, ViewportId};
+    for bare in [true, false] {
+        let ctx = egui::Context::default();
+        let mut tray = Tray::new(Config::default());
+        tray.bare = bare;
+        tray.window_drag = true;
+        tray.connected = true;
+        // One frame; true when the tray asked the system to start moving the window.
+        let frame = |tray: &mut Tray, events: Vec<Event>| -> bool {
+            let input = RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0))),
+                events,
+                ..Default::default()
+            };
+            let output = ctx.run(input, |ctx| {
+                tray.show(ctx, 0);
+            });
+            output.viewport_output[&ViewportId::ROOT]
+                .commands
+                .iter()
+                .any(|c| matches!(c, ViewportCommand::StartDrag))
+        };
+        let button = |pos, pressed| Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        frame(&mut tray, vec![]);
+        frame(&mut tray, vec![]);
+        let mut opened = false;
+        'rows: for y in [8.0, 14.0, 20.0, 26.0] {
+            for step in 0..200 {
+                let pos = pos2(798.0 - step as f32 * 4.0, y);
+                let mut moved = frame(&mut tray, vec![Event::PointerMoved(pos)]);
+                moved |= frame(&mut tray, vec![button(pos, true)]);
+                moved |= frame(&mut tray, vec![button(pos, false)]);
+                if tray.draft.is_some() && !tray.editing {
+                    assert!(!moved, "the click on Customize also started a window move");
+                    opened = true;
+                    break 'rows;
+                }
+                // A click that opened something else (the Add widget menu, Edit tray) is undone.
+                tray.cancel_customization();
+                frame(
+                    &mut tray,
+                    vec![Event::Key {
+                        key: egui::Key::Escape,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: Default::default(),
+                    }],
+                );
+            }
+        }
+        assert!(
+            opened,
+            "no click on the top row opened Customize (bare: {bare})"
+        );
+        tray.cancel_customization();
+        frame(&mut tray, vec![]);
+        // The left end of a bare top row is empty: pressing and pulling there moves the window.
+        if bare {
+            let (from, to) = (pos2(20.0, 12.0), pos2(60.0, 40.0));
+            let mut moved = frame(&mut tray, vec![Event::PointerMoved(from)]);
+            moved |= frame(&mut tray, vec![button(from, true)]);
+            moved |= frame(&mut tray, vec![Event::PointerMoved(to)]);
+            frame(&mut tray, vec![button(to, false)]);
+            assert!(
+                moved,
+                "dragging the empty part of the top row did not move the window"
+            );
+        }
+    }
+}

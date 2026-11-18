@@ -56,7 +56,8 @@ if ($report -notmatch 'Ready to run|Everything is ready') { Fail 'the compatibil
 
 Write-Host "`n######## The panel sits on the desktop background; the floating window is a setting (SQ-48)"
 if ($report -notmatch 'windows-desktop') { Fail 'the compatibility check does not report the desktop placement' }
-Add-Type -Namespace SqTest -Name Win -MemberDefinition @'
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -Namespace SqTest -Name Win -ReferencedAssemblies System.Drawing -MemberDefinition @'
 public delegate bool EnumProc(System.IntPtr hwnd, System.IntPtr lParam);
 [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc callback, System.IntPtr lParam);
 [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(System.IntPtr hwnd, out uint pid);
@@ -65,6 +66,39 @@ public delegate bool EnumProc(System.IntPtr hwnd, System.IntPtr lParam);
 [DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr hwnd, out Rect rect);
 [DllImport("user32.dll")] public static extern bool GetClientRect(System.IntPtr hwnd, out Rect rect);
 [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(System.IntPtr hwnd, System.Text.StringBuilder text, int max);
+[DllImport("user32.dll")] public static extern System.IntPtr WindowFromPoint(System.Drawing.Point point);
+[DllImport("user32.dll")] public static extern System.IntPtr GetAncestor(System.IntPtr hwnd, uint flags);
+[DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+[DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, System.UIntPtr extra);
+[DllImport("user32.dll")] public static extern bool SetForegroundWindow(System.IntPtr hwnd);
+// The visible "Status Quo" window of one process, and where it is on the screen.
+public static System.IntPtr PanelWindow(uint wanted, out Rect place) {
+    var result = System.IntPtr.Zero; var where = new Rect();
+    EnumWindows(delegate(System.IntPtr hwnd, System.IntPtr l) {
+        var text = new System.Text.StringBuilder(256);
+        GetWindowText(hwnd, text, 256);
+        uint pid; GetWindowThreadProcessId(hwnd, out pid);
+        if (IsWindowVisible(hwnd) && pid == wanted && text.ToString() == "Status Quo") { result = hwnd; GetWindowRect(hwnd, out where); return false; }
+        return true;
+    }, System.IntPtr.Zero);
+    place = where; return result;
+}
+// Windows lists its windows from the front to the back: true when `front` comes before `back`.
+public static bool InFrontOf(System.IntPtr front, System.IntPtr back) {
+    int index = 0, frontAt = -1, backAt = -1;
+    EnumWindows(delegate(System.IntPtr hwnd, System.IntPtr l) {
+        if (hwnd == front) frontAt = index;
+        if (hwnd == back) backAt = index;
+        index++; return true;
+    }, System.IntPtr.Zero);
+    return frontAt >= 0 && backAt >= 0 && frontAt < backAt;
+}
+// A real left click at a point of the screen.
+public static void Click(int x, int y) {
+    SetCursorPos(x, y); System.Threading.Thread.Sleep(200);
+    mouse_event(2, 0, 0, 0, System.UIntPtr.Zero); System.Threading.Thread.Sleep(80);
+    mouse_event(4, 0, 0, 0, System.UIntPtr.Zero);
+}
 public static string Panels() {
     var found = new System.Collections.Generic.List<string>();
     EnumWindows(delegate(System.IntPtr hwnd, System.IntPtr l) {
@@ -96,6 +130,33 @@ function WaitTitleBar($wanted) {
 }
 if (-not (WaitTitleBar $false)) { Fail "after the install the panel is not a frameless window on the desktop (title bar: $(TitleBar))" }
 Write-Host 'default: no title bar, on the desktop background'
+# Behind the other windows: another window is opened over the left half of the panel, then
+# the panel is clicked for real (a click is what makes Windows bring a window to the front).
+# The other window must stay in front, and the screen must show it where the two overlap.
+function BehindOtherWindows($label) {
+    $place = New-Object SqTest.Win+Rect
+    $panel = [SqTest.Win]::PanelWindow([uint32](Panel | Select-Object -First 1).Id, [ref]$place)
+    if ($panel -eq [IntPtr]::Zero) { Fail "$label`: the panel window was not found" }
+    $width = $place.Right - $place.Left; $height = $place.Bottom - $place.Top
+    $other = New-Object Windows.Forms.Form
+    $other.Text = 'Another window'; $other.StartPosition = 'Manual'
+    $other.SetBounds($place.Left, $place.Top, [int]($width / 2), $height)
+    $other.Show(); $other.Activate(); [Windows.Forms.Application]::DoEvents()
+    Start-Sleep -Seconds 1
+    try {
+        foreach ($round in 1..2) {
+            [SqTest.Win]::Click($place.Right - 8, $place.Bottom - 8)
+            [void][SqTest.Win]::SetForegroundWindow($panel)
+            foreach ($tick in 1..10) { [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 150 }
+            if (-not [SqTest.Win]::InFrontOf($other.Handle, $panel)) { Fail "$label`: after a click on the panel it is in front of another window (click $round)" }
+            $point = New-Object Drawing.Point ([int]($place.Left + $width / 4)), ([int]($place.Top + $height / 2))
+            $seen = [SqTest.Win]::GetAncestor([SqTest.Win]::WindowFromPoint($point), 2)
+            if ($seen -ne $other.Handle) { Fail "$label`: where the two windows overlap, the screen does not show the other window (click $round)" }
+        }
+    } finally { $other.Close(); $other.Dispose() }
+    Write-Host "$label`: the panel stays behind another window, also after being clicked"
+}
+BehindOtherWindows 'default'
 $said = & $installed floating on | Out-String
 Write-Host $said
 if (-not (WaitTitleBar $true)) { Fail 'with the Floating window setting on, the panel did not become an ordinary window' }
@@ -104,6 +165,7 @@ $said = & $installed floating off | Out-String
 Write-Host $said
 if (-not (WaitTitleBar $false)) { Fail 'with the Floating window setting off, the panel did not go back to the desktop background' }
 Write-Host 'Floating window off: back on the desktop background'
+BehindOtherWindows 'after Floating window off'
 if ((Panel).Count -eq 0) { Fail 'the panel is not running after switching the setting' }
 
 Write-Host "`n######## Uninstall, with the line of the README"

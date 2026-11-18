@@ -319,6 +319,12 @@ fn run() -> Result<(), String> {
         }
         let (config, screenshot, note) =
             (config.clone(), screenshot.clone(), selection.note.clone());
+        // The DirectX fallback cannot draw a see-through window: the frameless panel then
+        // keeps its own background and title row instead of showing black between widgets.
+        #[cfg(windows)]
+        let opaque = matches!(renderer, eframe::Renderer::Wgpu);
+        #[cfg(not(windows))]
+        let opaque = false;
         let result = eframe::run_native(
             "Status Quo",
             options,
@@ -332,7 +338,7 @@ fn run() -> Result<(), String> {
                 );
                 app.tray.capabilities = format!("{note} {}", native::capabilities());
                 app.x11_hints_pending = desktop_hints;
-                app.tray.bare = !framed;
+                app.tray.bare = !framed && !opaque;
                 app.tray.window_drag = !framed;
                 app.place_default = place_default;
                 app.restart_on_floating = restart_on_floating;
@@ -518,6 +524,9 @@ struct App {
     restart_on_floating: bool,
     /// Put the window in the top right corner once (first start, no saved position).
     place_default: bool,
+    /// Windows: whether the window is currently held behind the others (None: not set yet).
+    #[cfg_attr(not(windows), allow(dead_code))]
+    kept_behind: Option<bool>,
 }
 impl App {
     fn new(
@@ -573,6 +582,7 @@ impl App {
             floating,
             restart_on_floating: false,
             place_default: false,
+            kept_behind: None,
         }
     }
     fn intent(&mut self, intent: Intent) {
@@ -644,7 +654,24 @@ impl eframe::App for App {
                 }
             }
         }
-        #[cfg(not(target_os = "linux"))]
+        // Windows raises a window again at every click: the panel is held at the bottom.
+        #[cfg(windows)]
+        {
+            use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            let behind = matches!(
+                native::level(self.tray.config.layer),
+                egui::WindowLevel::AlwaysOnBottom
+            );
+            if self.kept_behind != Some(behind) {
+                if let Some(RawWindowHandle::Win32(handle)) =
+                    frame.window_handle().ok().map(|h| h.as_raw())
+                {
+                    host::windows::keep_behind(handle.hwnd.get(), behind);
+                    self.kept_behind = Some(behind);
+                }
+            }
+        }
+        #[cfg(not(any(target_os = "linux", windows)))]
         let _ = frame;
         self.tick(ctx);
     }
