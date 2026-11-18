@@ -52,7 +52,11 @@ irm https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.ps1 |
 ~/.local/bin/status-quo uninstall
 ```
 
-On Windows: `& "$env:LOCALAPPDATA\status-quo\bin\status-quo.exe" uninstall`
+On Windows, in PowerShell:
+
+```powershell
+& "$env:LOCALAPPDATA\status-quo\bin\status-quo.exe" uninstall | Out-Host
+```
 
 Good to know: Status Quo only *reads* the files that Claude, Codex and GitHub already saved on your computer; it sends nothing anywhere. It runs on Linux and Windows. It is not available for macOS.
 

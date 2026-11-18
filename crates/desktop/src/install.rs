@@ -201,9 +201,51 @@ fn write_checked(
 fn remove_checked(path: &Path, expected: &Option<Vec<u8>>) -> Result<(), String> {
     unchanged(path, expected)?;
     if expected.is_some() {
-        fs::remove_file(path).map_err(|e| e.to_string())?;
+        if let Err(error) = fs::remove_file(path) {
+            if !remove_running_program(path) {
+                return Err(format!("{}: {error}", path.display()));
+            }
+        }
     }
     Ok(())
+}
+/// Windows never deletes the file of a program that is running, and `uninstall` is run from
+/// the installed program itself. A running program may be renamed though: the file is moved
+/// aside, so the installed path is free at once, and a hidden command deletes the moved file
+/// (and the then empty folder) a moment after this process has ended.
+#[cfg(windows)]
+fn remove_running_program(path: &Path) -> bool {
+    let same = |a: &Path, b: &Path| match (fs::canonicalize(a), fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    };
+    if !std::env::current_exe().is_ok_and(|own| same(&own, path)) {
+        return false;
+    }
+    let aside = path.with_extension(format!("removed-{}", std::process::id()));
+    if fs::rename(path, &aside).is_err() {
+        return false;
+    }
+    let folder = path.parent().unwrap_or(Path::new("."));
+    let script = format!(
+        "ping -n 3 127.0.0.1 >nul & del /f /q \"{}\" & rmdir \"{}\"",
+        aside.display(),
+        folder.display()
+    );
+    keep_own_handles();
+    let mut command = Command::new("cmd");
+    std::os::windows::process::CommandExt::raw_arg(&mut command, format!("/c {script}"));
+    std::os::windows::process::CommandExt::creation_flags(&mut command, 0x0000_0008 | 0x0800_0000);
+    let _ = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    true
+}
+#[cfg(not(windows))]
+fn remove_running_program(_path: &Path) -> bool {
+    false
 }
 fn encode(value: &Value) -> Result<Vec<u8>, String> {
     let mut bytes = serde_json::to_vec_pretty(value).map_err(|e| e.to_string())?;

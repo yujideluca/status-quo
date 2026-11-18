@@ -46,13 +46,33 @@ if ((Panel).Count -eq 0) { Fail 'no Status Quo process is running after the inst
 Write-Host "running: $((Panel | ForEach-Object { $_.Id }) -join ', ')"
 
 Write-Host "`n######## Compatibility check"
-& $installed doctor
-if ($LASTEXITCODE -ne 0) { Fail 'the compatibility check reports a blocking problem' }
+# The program has no console window: without a pipe PowerShell would not wait for it and
+# would leave the exit code of an earlier command in $LASTEXITCODE.
+$report = & $installed doctor | Out-String
+$code = $LASTEXITCODE
+Write-Host $report
+if ($code -ne 0) { Fail 'the compatibility check reports a blocking problem' }
+if ($report -notmatch 'Ready to run|Everything is ready') { Fail 'the compatibility check printed no verdict' }
 
-Write-Host "`n######## Uninstall"
-& $installed uninstall
-if ($LASTEXITCODE -ne 0) { Fail 'uninstall failed' }
-Start-Sleep -Seconds 3
+Write-Host "`n######## Uninstall, with the line of the README"
+$readme = Join-Path $PSScriptRoot '..\..\README.md'
+$remove = @(Get-Content $readme | Where-Object { $_ -match '^& "\$env:LOCALAPPDATA.*status-quo\.exe" uninstall' })[0]
+if (-not $remove) { Fail 'the README has no uninstall line for Windows' }
+Write-Host "> $remove"
+$ErrorActionPreference = 'Continue'
+$log = & $Shell -NoProfile -ExecutionPolicy Bypass -Command "$remove; exit `$LASTEXITCODE" 2>&1 | Out-String
+$code = $LASTEXITCODE
+$ErrorActionPreference = 'Stop'
+Write-Host $log
+if ($code -ne 0) { Fail "uninstall ended with code $code" }
+if ($log -notmatch 'Uninstalled Status Quo') { Fail 'uninstall did not say it uninstalled' }
+$startup = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup\status-quo.vbs'
+if (Test-Path $installed) { Fail "the program is still at $installed after uninstall" }
+if (Test-Path $startup) { Fail 'the sign-in start entry is still there after uninstall' }
 if ((Panel).Count -ne 0) { Fail 'the panel is still running after uninstall' }
+# The moved-aside program file and its folder are deleted a moment after uninstall ends.
+$bin = Split-Path $installed
+foreach ($second in 1..20) { if (-not (Test-Path $bin)) { break }; Start-Sleep -Seconds 1 }
+if (Test-Path $bin) { Fail "leftovers after uninstall: $((Get-ChildItem $bin -Force | ForEach-Object Name) -join ', ')" }
 
 Write-Host "`nPROVEN on $((Get-CimInstance Win32_OperatingSystem).Caption) with $Shell"

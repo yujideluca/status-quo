@@ -92,9 +92,25 @@ pub fn plan(o: &Options) -> Vec<&'static str> {
 fn say(text: &str) {
     println!("\n==> {text}");
 }
+/// The name people know: Windows 11 still calls itself version 10.0, with a build of 22000 or more.
+pub fn windows_name(text: &str) -> Option<u32> {
+    let major = windows_major(text)?;
+    let build: Option<u32> = text
+        .split("Version")
+        .nth(1)?
+        .trim_start()
+        .split(['.', ' ', ']'])
+        .nth(2)
+        .and_then(|part| part.parse().ok());
+    Some(if major == 10 && build.is_some_and(|b| b >= 22000) {
+        11
+    } else {
+        major
+    })
+}
 fn windows_version() -> Option<u32> {
     let out = Command::new("cmd").args(["/C", "ver"]).output().ok()?;
-    windows_major(&String::from_utf8_lossy(&out.stdout))
+    windows_name(&String::from_utf8_lossy(&out.stdout))
 }
 /// The program to run: the embedded copy, or a `status-quo.exe` next to this installer.
 fn unpack() -> Result<PathBuf, String> {
@@ -230,7 +246,8 @@ fn real_main(o: &Options) -> Result<(), String> {
     } else {
         say("Done.");
     }
-    println!("To remove Status Quo later, run this file again with --uninstall.");
+    println!("To remove Status Quo later, paste this in PowerShell:");
+    println!("  & \"$env:LOCALAPPDATA\\status-quo\\bin\\status-quo.exe\" uninstall | Out-Host");
     Ok(())
 }
 
@@ -304,6 +321,14 @@ mod tests {
             Some(6)
         );
         assert_eq!(windows_major("nothing"), None);
+        assert_eq!(
+            windows_name("Microsoft Windows [Version 10.0.26100.1]"),
+            Some(11)
+        );
+        assert_eq!(
+            windows_name("Microsoft Windows [Version 10.0.19045.1]"),
+            Some(10)
+        );
         let path = installed_path(Path::new("C:/Users/a/AppData/Local"));
         assert!(path.ends_with("status-quo/bin/status-quo.exe"));
     }

@@ -56,15 +56,24 @@ pub fn render(checks: &[Check]) -> String {
 pub fn exit_code(checks: &[Check]) -> i32 {
     i32::from(checks.iter().any(|c| c.level == Level::Fail))
 }
-/// The major version in the output of `cmd /c ver` ("Microsoft Windows [Version 10.0.19044.1]").
-pub fn windows_major(text: &str) -> Option<u32> {
+/// The version numbers in the output of `cmd /c ver` ("Microsoft Windows [Version 10.0.19044.1]").
+fn windows_numbers(text: &str) -> Option<Vec<u32>> {
     let after = text.split("Version").nth(1)?;
-    after
+    let numbers: Vec<u32> = after
         .trim_start()
         .split(['.', ' ', ']'])
-        .next()?
-        .parse()
-        .ok()
+        .map_while(|part| part.parse().ok())
+        .collect();
+    (!numbers.is_empty()).then_some(numbers)
+}
+/// The name people know: Windows 11 still calls itself version 10.0, with a build of 22000 or more.
+pub fn windows_name(text: &str) -> Option<u32> {
+    let numbers = windows_numbers(text)?;
+    Some(match numbers[..] {
+        [10, _, build, ..] if build >= 22000 => 11,
+        [major, ..] => major,
+        [] => return None,
+    })
 }
 /// Session facts the display check needs; filled from the environment, or by tests.
 pub struct Session<'a> {
@@ -241,7 +250,7 @@ pub fn gather() -> Vec<Check> {
             .args(["/C", "ver"])
             .output()
             .ok()
-            .and_then(|o| windows_major(&String::from_utf8_lossy(&o.stdout)));
+            .and_then(|o| windows_name(&String::from_utf8_lossy(&o.stdout)));
         checks.push(match version {
             Some(v) if v >= 10 => {
                 check(Level::Ok, "System", format!("Windows {v} ({system})"), None)
@@ -436,15 +445,19 @@ mod tests {
     // REQ SQ-41
     #[test]
     fn windows_version_is_read_from_the_ver_output() {
+        assert_eq!(windows_name("garbage"), None);
         assert_eq!(
-            windows_major("\r\nMicrosoft Windows [Version 10.0.19044.1288]\r\n"),
+            windows_name("Microsoft Windows [Version 10.0.26100.1]"),
+            Some(11)
+        );
+        assert_eq!(
+            windows_name("Microsoft Windows [Version 10.0.19044.1288]"),
             Some(10)
         );
         assert_eq!(
-            windows_major("Microsoft Windows [Version 6.1.7601]"),
+            windows_name("Microsoft Windows [Version 6.1.7601]"),
             Some(6)
         );
-        assert_eq!(windows_major("garbage"), None);
     }
 
     // REQ SQ-41
