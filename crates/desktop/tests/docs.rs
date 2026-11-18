@@ -388,7 +388,7 @@ fn installation_is_proven_by_real_runs_never_by_dry_runs() {
     for system in [
         "ubuntu:18.04",
         "ubuntu:24.04",
-        "debian:11",
+        "debian:12",
         "fedora:latest",
         "rockylinux:8",
         "archlinux:latest",

@@ -33,7 +33,7 @@ irm https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.ps1 |
 
 **Prefer a download to a terminal?** Windows: download [status-quo-setup.exe](https://github.com/yujideluca/status-quo/releases/latest/download/status-quo-setup.exe) and double-click it. Windows may show a blue box, "Windows protected your PC", because the file is new and unsigned: click **More info**, then **Run anyway**. The pasted line above does not show that box.
 
-**What it runs on.** Windows 10 and 11 (64-bit). Linux with an Intel/AMD or ARM 64-bit processor: Ubuntu 18.04 or newer, Debian 11 or newer, Mint, Fedora, Rocky/Alma/RHEL 8 or newer, Arch, openSUSE, Void and their relatives. Nothing has to be installed beforehand: the installer brings the libraries the panel needs. Before every release, this exact line is run on a bare copy of each of those systems and the panel must come up, or the release is not published.
+**What it runs on.** Windows 10 and 11 (64-bit). Linux with an Intel/AMD or ARM 64-bit processor: Ubuntu 18.04 or newer, Debian 12 or newer, Mint, Fedora, Rocky/Alma/RHEL 8 or newer, Arch, openSUSE, Void and their relatives. Nothing has to be installed beforehand: the installer brings the libraries the panel needs. Before every release, this exact line is run on a bare copy of each of those systems and the panel must come up, or the release is not published.
 
 **Something went wrong?**
 

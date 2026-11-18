@@ -45,12 +45,13 @@ jobs:
       matrix:
         # Base images of the distributions people use, oldest supported to newest. They are
         # not pinned on purpose: the test must meet each distribution as it is today.
+        # Debian 11 is absent: it reached its end of life in 2026 and Debian's servers no longer
+        # hold its packages (apt answers 404), so nothing can be installed on it by anyone.
         include:
           - { image: "ubuntu:18.04", fetch: wget }
           - { image: "ubuntu:20.04", fetch: wget }
           - { image: "ubuntu:22.04", fetch: curl }
           - { image: "ubuntu:24.04", fetch: wget }
-          - { image: "debian:11", fetch: wget }
           - { image: "debian:12", fetch: curl }
           - { image: "debian:13", fetch: wget }
           - { image: "fedora:latest", fetch: curl }
@@ -140,6 +141,13 @@ jobs:
           cp target/release/status-quo-setup.exe tools/get.ps1 served/
           (cd served && sha256sum status-quo-setup.exe > status-quo-setup.exe.sha256)
           sh tools/install-test/readme-command.sh windows http://127.0.0.1:8017 > build/command.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-package
+          path: |
+            served/status-quo-setup.exe
+            served/status-quo-setup.exe.sha256
+          retention-days: 30
       - name: Run the README install line in Windows PowerShell 5.1, then in PowerShell 7
         shell: pwsh
         timeout-minutes: 15
@@ -153,13 +161,6 @@ jobs:
               if ($LASTEXITCODE -ne 0) { throw "install test failed in $shell" }
             }
           } finally { Stop-Process -Id $server.Id -Force }
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: windows-package
-          path: |
-            served/status-quo-setup.exe
-            served/status-quo-setup.exe.sha256
-          retention-days: 30
 
   install-proof:
     # One name that is green only when every real install above passed.
