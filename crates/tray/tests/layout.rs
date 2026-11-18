@@ -372,8 +372,17 @@ fn dragging_the_body_moves_anywhere_and_done_saves_a_normalized_canvas() {
     let size = tray.desired_size().expect("a free canvas wants a size");
     let rects = sq_tray::free_rects(&tray.config.widgets, tray.config.gap);
     let canvas = sq_tray::canvas_size(&rects);
-    assert_eq!(size.x, canvas.x.max(330.0));
-    assert!(size.y > canvas.y, "header is added to the canvas height");
+    // This tray draws its own background: the border around the widgets is part of the size,
+    // or the last column and row would be cut off.
+    assert_eq!(size.x, canvas.x.max(330.0) + 24.0);
+    assert!(
+        size.y >= canvas.y + tray.header_height + 24.0,
+        "header and border are added to the canvas height"
+    );
+    tray.bare = true;
+    let bare = tray.desired_size().unwrap();
+    assert_eq!(bare.x, canvas.x.max(330.0), "a bare tray has no border");
+    assert_eq!(bare.y, canvas.y + tray.header_height);
 }
 
 // REQ SQ-29

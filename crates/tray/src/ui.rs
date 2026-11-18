@@ -173,9 +173,11 @@ impl Tray {
         }
         let rects = layout::free_rects(&self.config.widgets, self.config.gap);
         let canvas = layout::canvas_size(&rects);
+        // A tray that draws its own background keeps a border around the widgets.
+        let border = if self.bare { 0.0 } else { 2.0 * PANEL_BORDER };
         Some(Vec2::new(
-            canvas.x.max(330.0),
-            self.header_height + canvas.y,
+            canvas.x.max(330.0) + border,
+            self.header_height + canvas.y + border,
         ))
     }
     /// Rectangles of the last flow-layout frame, relative to the content corner.
@@ -362,7 +364,7 @@ impl Tray {
             } else {
                 egui::Frame::NONE
                     .fill(background(&theme))
-                    .inner_margin(12.0)
+                    .inner_margin(PANEL_BORDER)
             })
             .show(ctx, |ui| {
                 if self.draft.is_some() && !self.editing {
@@ -1900,6 +1902,8 @@ pub fn reset_label(reset: i64, now: i64) -> String {
 }
 /// Shown under the appearance settings when the host cannot draw a see-through window.
 pub const OPAQUE_NOTE: &str = "This computer draws the panel without OpenGL, so the background cannot be see-through here: Background opacity has no effect.";
+/// Space between the edge of a tray that draws its own background and its widgets.
+pub const PANEL_BORDER: f32 = 12.0;
 /// Shown when the floating window is chosen together with the Behind layer.
 pub const FLOATING_BEHIND_NOTE: &str =
     "A floating window is never held behind the others: with it, Behind works like Normal.";
