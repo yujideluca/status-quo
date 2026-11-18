@@ -39,7 +39,7 @@ irm https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.ps1 |
 
 | What you see | What to do |
 |---|---|
-| `curl or wget is needed` (Linux) | Rare: this system has no download tool at all. Install one with your package manager, for example `sudo apt-get install -y wget`, then paste the line again |
+| `wget: not found` or `curl or wget is needed` (Linux) | Rare: this system has no download tool at all. Install one with your package manager, for example `sudo apt-get install -y wget`, then paste the line again |
 | `Status Quo was installed, but the panel did not start` | The lines above that message say why, in plain words. Fix what they name, then type `~/.local/bin/status-quo launch --verify` |
 | `checksum does not match` | The download was damaged. Nothing was installed. Paste the line again |
 | Red text: `The download did not arrive` (Windows) | Your connection failed. The window stays open: paste the line again |

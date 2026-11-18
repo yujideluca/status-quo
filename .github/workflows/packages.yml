@@ -142,6 +142,7 @@ jobs:
           sh tools/install-test/readme-command.sh windows http://127.0.0.1:8017 > build/command.txt
       - name: Run the README install line in Windows PowerShell 5.1, then in PowerShell 7
         shell: pwsh
+        timeout-minutes: 15
         run: |
           $server = Start-Process python -ArgumentList '-m','http.server','8017','--bind','127.0.0.1','--directory','served' -PassThru -WindowStyle Hidden
           Start-Sleep -Seconds 3

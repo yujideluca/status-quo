@@ -23,6 +23,8 @@ if ($Base) { $env:SQ_RELEASE_BASE = $Base } else { Remove-Item Env:SQ_RELEASE_BA
 Write-Host "`n######## The one-paste command, as written in the README"
 # The command runs in a new window-less shell, exactly as pasted; the shell must survive it.
 $run = "$Line; Write-Host SHELL-STILL-OPEN; exit `$LASTEXITCODE"
+# The output goes through a pipe on purpose: an installer that leaves the panel holding the
+# pipe would make this wait forever (it did, before the panel was given its own streams).
 $ErrorActionPreference = 'Continue'
 $log = & $Shell -NoProfile -ExecutionPolicy Bypass -Command $run 2>&1 | Out-String
 $code = $LASTEXITCODE

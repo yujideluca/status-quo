@@ -571,21 +571,31 @@ fn other_processes() -> Vec<u32> {
 }
 #[cfg(not(windows))]
 fn stop_others() {
-    let pids = other_processes();
-    if pids.is_empty() {
-        return;
-    }
-    let _ = Command::new("kill")
-        .args(pids.iter().map(u32::to_string))
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-    for _ in 0..30 {
-        if other_processes().is_empty() {
-            return;
+    // `kill` of the shell itself: minimal systems (Debian and Void base installs) have no
+    // separate kill program, and then the old panel was never stopped.
+    let signal = |how: &str| {
+        let pids: Vec<String> = other_processes().iter().map(u32::to_string).collect();
+        if pids.is_empty() {
+            return true;
         }
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        let _ = Command::new("sh")
+            .arg("-c")
+            .arg(format!("kill {how} {}", pids.join(" ")))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        for _ in 0..30 {
+            if other_processes().is_empty() {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        false
+    };
+    // Ask first; a panel that does not answer within three seconds is ended.
+    if !signal("-TERM") {
+        signal("-KILL");
     }
 }
 #[cfg(windows)]
@@ -611,6 +621,30 @@ fn stop_others() {
 fn panel_log() -> PathBuf {
     sq_collector::state_root().join("panel.log")
 }
+/// Windows hands every inheritable handle of this process to a program it starts. When the
+/// installer's output goes to a pipe or a file (a script, a log, CI), the panel would hold that
+/// pipe open for as long as it runs and whoever reads it would wait forever. The three standard
+/// streams of this process are therefore marked "not inherited" before the panel is started;
+/// the panel gets its own (nothing in, nothing out, errors to panel.log).
+#[cfg(windows)]
+fn keep_own_streams() {
+    use std::os::windows::io::AsRawHandle;
+    extern "system" {
+        fn SetHandleInformation(handle: *mut std::ffi::c_void, mask: u32, flags: u32) -> i32;
+    }
+    const HANDLE_FLAG_INHERIT: u32 = 1;
+    for handle in [
+        std::io::stdin().as_raw_handle(),
+        std::io::stdout().as_raw_handle(),
+        std::io::stderr().as_raw_handle(),
+    ] {
+        if !handle.is_null() {
+            // SAFETY: the handle belongs to this process; clearing its inherit flag changes
+            // nothing for this process and fails harmlessly on an invalid handle.
+            unsafe { SetHandleInformation(handle.cast(), HANDLE_FLAG_INHERIT, 0) };
+        }
+    }
+}
 /// Start the panel as a background process of this user, detached from this terminal and
 /// without a console window. The installed program is used when there is one.
 fn start_detached() -> Result<std::process::Child, String> {
@@ -627,6 +661,8 @@ fn start_detached() -> Result<std::process::Child, String> {
         .map(Stdio::from)
         .unwrap_or_else(|_| Stdio::null());
     let mut command = Command::new(program);
+    #[cfg(windows)]
+    keep_own_streams();
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut command, 0);
     #[cfg(windows)]

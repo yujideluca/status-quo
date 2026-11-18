@@ -51,12 +51,13 @@ step "The panel runs as the user's login service and stays up"
 sleep 10
 for unit in status-quo-collector.service status-quo-panel.service; do
   [ "$(systemctl --user is-active "$unit")" = active ] || fail "$unit is not running"
-  [ "$(systemctl --user is-enabled "$unit")" = enabled ] || fail "$unit does not start at login"
 done
+[ -f "$HOME/.config/autostart/status-quo.desktop" ] || fail "nothing starts the panel at login"
 "$BIN" doctor || fail "the compatibility check reports a blocking problem"
 
 step "The panel draws: a picture of it is saved"
 "$BIN" stop
+[ "$(systemctl --user is-active status-quo-panel.service || true)" != active ] || fail "the panel did not stop"
 timeout 60 "$BIN" --screenshot "$OUT/panel.png" || fail "the panel could not draw a picture of itself"
 [ "$(wc -c <"$OUT/panel.png")" -gt 2000 ] || fail "the picture of the panel is empty"
 
