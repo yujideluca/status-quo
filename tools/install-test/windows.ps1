@@ -61,7 +61,9 @@ public delegate bool EnumProc(System.IntPtr hwnd, System.IntPtr lParam);
 [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc callback, System.IntPtr lParam);
 [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(System.IntPtr hwnd, out uint pid);
 [DllImport("user32.dll")] public static extern bool IsWindowVisible(System.IntPtr hwnd);
-[DllImport("user32.dll")] public static extern int GetWindowLong(System.IntPtr hwnd, int index);
+[StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left, Top, Right, Bottom; }
+[DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr hwnd, out Rect rect);
+[DllImport("user32.dll")] public static extern bool GetClientRect(System.IntPtr hwnd, out Rect rect);
 [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(System.IntPtr hwnd, System.Text.StringBuilder text, int max);
 public static string Panels() {
     var found = new System.Collections.Generic.List<string>();
@@ -70,19 +72,21 @@ public static string Panels() {
         GetWindowText(hwnd, text, 256);
         if (IsWindowVisible(hwnd) && text.ToString() == "Status Quo") {
             uint pid; GetWindowThreadProcessId(hwnd, out pid);
-            found.Add(pid + ":" + GetWindowLong(hwnd, -16));
+            Rect outer, inner; GetWindowRect(hwnd, out outer); GetClientRect(hwnd, out inner);
+            found.Add(pid + ":" + ((outer.Bottom - outer.Top) - (inner.Bottom - inner.Top)));
         }
         return true;
     }, System.IntPtr.Zero);
     return string.Join(",", found.ToArray());
 }
 '@
-# WS_CAPTION (0x00C00000) is the title bar of an ordinary window.
+# An ordinary window is taller than its content by its title bar and borders; a frameless
+# window is exactly as tall as its content. (The window style cannot tell them apart.)
 function TitleBar {
     $ids = @(Panel | ForEach-Object { $_.Id })
     foreach ($entry in ([SqTest.Win]::Panels() -split ',' | Where-Object { $_ })) {
-        $processId, $style = $entry -split ':'
-        if ($ids -contains [int]$processId) { return (([int]$style -band 0x00C00000) -eq 0x00C00000) }
+        $processId, $frame = $entry -split ':'
+        if ($ids -contains [int]$processId) { return ([int]$frame -ge 8) }
     }
     return $null
 }

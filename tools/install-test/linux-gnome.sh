@@ -43,16 +43,20 @@ mutter --headless --wayland --virtual-monitor 1280x800 --wayland-display sq-gnom
 wait_for 30 test -S "$XDG_RUNTIME_DIR/sq-gnome" || fail "Mutter did not start"
 export WAYLAND_DISPLAY=sq-gnome
 mutter --version
-# Mutter listens on an X display and starts XWayland for the first X program.
-display() {
-  for socket in /tmp/.X11-unix/X*; do
-    [ -S "$socket" ] && echo "${socket##*/X}"
-  done | sort -n | tail -n 1
+# Mutter offers an X display for X programs (XWayland) and protects it with a key file, as a
+# GNOME session does; the session passes both to every program through DISPLAY and XAUTHORITY.
+display() { sed -n 's/.*Using public X11 display \(:[0-9]*\).*/\1/p' /tmp/mutter.log | head -n 1; }
+authority() {
+  for file in "$XDG_RUNTIME_DIR"/.mutter-Xwaylandauth.*; do
+    [ -f "$file" ] && echo "$file" && return 0
+  done
+  return 1
 }
-has_display() { [ -n "$(display)" ]; }
+has_display() { [ -n "$(display)" ] && authority; }
 wait_for 30 has_display || fail "Mutter offers no XWayland display"
-DISPLAY=:$(display)
-export DISPLAY
+DISPLAY=$(display)
+XAUTHORITY=$(authority)
+export DISPLAY XAUTHORITY
 echo "Wayland display: $WAYLAND_DISPLAY, XWayland display: $DISPLAY"
 
 step "Install the package (no start yet)"
