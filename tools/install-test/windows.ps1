@@ -134,6 +134,25 @@ Write-Host 'default: no title bar, on the desktop background'
 # Behind the other windows: another window is opened over the left half of the panel, then
 # the panel is clicked for real (a click is what makes Windows bring a window to the front).
 # The other window must stay in front, and the screen must show it where the two overlap.
+# The frameless panel lies inside the free part of the screen (never under the taskbar) and
+# at its right edge, where a first start puts it.
+function InFreeArea($label) {
+    $area = [Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+    $place = New-Object SqTest.Win+Rect
+    $problem = 'the panel window was not found'
+    foreach ($second in 1..20) {
+        foreach ($process in @(Panel)) {
+            if ([SqTest.Win]::PanelWindow([uint32]$process.Id, [ref]$place) -ne [IntPtr]::Zero) {
+                $where = "panel $($place.Left),$($place.Top) to $($place.Right),$($place.Bottom); free area $($area.Left),$($area.Top) to $($area.Right),$($area.Bottom)"
+                if ($place.Top -lt $area.Top -or $place.Left -lt $area.Left -or $place.Right -gt $area.Right -or $place.Bottom -gt $area.Bottom) { $problem = "the panel is not inside the free part of the screen ($where)" }
+                elseif ($place.Right -lt $area.Right - 48) { $problem = "the panel is not at the right edge of the screen ($where)" }
+                else { Write-Host "$label`: the panel is inside the free part of the screen, at its right edge ($where)"; return }
+            }
+        }
+        Start-Sleep -Seconds 1
+    }
+    Fail "$label`: $problem"
+}
 function BehindOtherWindows($label) {
     $place = New-Object SqTest.Win+Rect
     $panel = [IntPtr]::Zero
@@ -163,6 +182,7 @@ function BehindOtherWindows($label) {
     } finally { $other.Close(); $other.Dispose() }
     Write-Host "$label`: the panel stays behind another window, also after being clicked"
 }
+InFreeArea 'default'
 BehindOtherWindows 'default'
 $said = & $installed floating on | Out-String
 Write-Host $said
@@ -172,6 +192,7 @@ $said = & $installed floating off | Out-String
 Write-Host $said
 if (-not (WaitTitleBar $false)) { Fail 'with the Floating window setting off, the panel did not go back to the desktop background' }
 Write-Host 'Floating window off: back on the desktop background'
+InFreeArea 'after Floating window off'
 BehindOtherWindows 'after Floating window off'
 if ((Panel).Count -eq 0) { Fail 'the panel is not running after switching the setting' }
 
