@@ -1,0 +1,172 @@
+name: packages
+# Builds the two downloads (Linux package, Windows installer) and proves them by real runs
+# (SQ-47): the install line of the README is run as written on bare systems, where nothing
+# Status Quo needs is installed, and the real panel must come up. No step here is a dry run.
+# Called by quality-gate (every push) and by release (before anything is published).
+on:
+  workflow_call:
+jobs:
+  linux-package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+            image: quay.io/pypa/manylinux2014_x86_64@sha256:e6a785657009c612fe2a85fa933051d03a50ba62b1c5e47d62abcab546a2e423
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+            image: quay.io/pypa/manylinux2014_aarch64@sha256:c2995cae5e2d433fbe757d1466486727b3edd68ba644cd60df253365f35fda9e
+    name: linux-package (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: build/manylinux
+          key: manylinux-${{ matrix.arch }}-${{ hashFiles('Cargo.lock') }}
+      # Built inside an old base system (glibc 2.17) so the program starts on old and new
+      # distributions alike; the script also checks the result with tools/check_binary.rs.
+      - name: Build and pack inside the old base system
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src "${{ matrix.image }}" sh tools/package-linux.sh
+          sudo chown -R "$(id -u):$(id -g)" build
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: linux-package-${{ matrix.arch }}
+          path: build/pkg/
+          retention-days: 30
+
+  linux-install:
+    needs: linux-package
+    strategy:
+      fail-fast: false
+      matrix:
+        # Base images of the distributions people use, oldest supported to newest. They are
+        # not pinned on purpose: the test must meet each distribution as it is today.
+        include:
+          - { image: "ubuntu:18.04", fetch: wget }
+          - { image: "ubuntu:20.04", fetch: wget }
+          - { image: "ubuntu:22.04", fetch: curl }
+          - { image: "ubuntu:24.04", fetch: wget }
+          - { image: "debian:11", fetch: wget }
+          - { image: "debian:12", fetch: curl }
+          - { image: "debian:13", fetch: wget }
+          - { image: "fedora:latest", fetch: curl }
+          - { image: "rockylinux:8", fetch: curl }
+          - { image: "rockylinux:9", fetch: curl }
+          - { image: "almalinux:10", fetch: curl }
+          - { image: "archlinux:latest", fetch: curl }
+          - { image: "opensuse/leap:15.6", fetch: curl }
+          - { image: "opensuse/tumbleweed:latest", fetch: curl }
+          - { image: "ghcr.io/void-linux/void-glibc:latest", fetch: curl }
+          - { image: "debian:12", fetch: wget, arch: aarch64, runner: ubuntu-24.04-arm }
+    name: linux-install (${{ matrix.image }}, ${{ matrix.arch || 'x86_64' }})
+    runs-on: ${{ matrix.runner || 'ubuntu-24.04' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: linux-package-${{ matrix.arch || 'x86_64' }}
+          path: served
+      - name: Run the README install line on the bare system
+        run: |
+          cp tools/get.sh tools/install.sh served/
+          (cd served && python3 -m http.server 8017 --bind 127.0.0.1 >/dev/null 2>&1 &)
+          sleep 2
+          mkdir -p out
+          docker run --rm --network host \
+            -e SQ_RELEASE_BASE=http://127.0.0.1:8017 -e SQ_RAW_BASE=http://127.0.0.1:8017 \
+            -e FETCH=${{ matrix.fetch }} \
+            -v "$PWD/tools/install-test:/t:ro" -v "$PWD/out:/out" \
+            "${{ matrix.image }}" \
+            sh /t/linux-bare.sh "$(sh tools/install-test/readme-command.sh linux http://127.0.0.1:8017)" /out
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: panel-${{ strategy.job-index }}
+          path: out/
+          retention-days: 14
+
+  linux-user:
+    # An ordinary user on a full Ubuntu: administrator rights through sudo, panel as a login service.
+    needs: linux-package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: linux-package-x86_64
+          path: served
+      - name: Run the README install line as an ordinary user
+        run: |
+          cp tools/get.sh tools/install.sh served/
+          (cd served && python3 -m http.server 8017 --bind 127.0.0.1 >/dev/null 2>&1 &)
+          sleep 2
+          mkdir -p out
+          export SQ_RELEASE_BASE=http://127.0.0.1:8017 SQ_RAW_BASE=http://127.0.0.1:8017
+          sh tools/install-test/linux-host.sh "$(sh tools/install-test/readme-command.sh linux http://127.0.0.1:8017)" "$PWD/out"
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: panel-user
+          path: out/
+          retention-days: 14
+
+  windows-package:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@9fd5edfc8bba9f7408b867e3f58b5a2119358898 # 1.87.0
+      # Only read: a release build must never start from a cache entry written by this job.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: false
+      - run: cargo build --locked --release -p status-quo
+      - name: Build status-quo-setup.exe with the program inside
+        run: cargo build --locked --release -p status-quo-setup
+        env:
+          STATUS_QUO_PAYLOAD: ${{ github.workspace }}\target\release\status-quo.exe
+      - name: Both programs must ask only for what a clean Windows has
+        shell: bash
+        run: |
+          mkdir -p build served
+          rustc --edition 2021 -D warnings tools/check_binary.rs -o build/check-binary.exe
+          build/check-binary.exe target/release/status-quo.exe target/release/status-quo-setup.exe
+          cp target/release/status-quo-setup.exe tools/get.ps1 served/
+          (cd served && sha256sum status-quo-setup.exe > status-quo-setup.exe.sha256)
+          sh tools/install-test/readme-command.sh windows http://127.0.0.1:8017 > build/command.txt
+      - name: Run the README install line in Windows PowerShell 5.1, then in PowerShell 7
+        shell: pwsh
+        run: |
+          $server = Start-Process python -ArgumentList '-m','http.server','8017','--bind','127.0.0.1','--directory','served' -PassThru -WindowStyle Hidden
+          Start-Sleep -Seconds 3
+          $command = (Get-Content build/command.txt -Raw).Trim()
+          try {
+            foreach ($shell in 'powershell', 'pwsh') {
+              & $shell -NoProfile -ExecutionPolicy Bypass -File tools/install-test/windows.ps1 -Line $command -Shell $shell -Base http://127.0.0.1:8017
+              if ($LASTEXITCODE -ne 0) { throw "install test failed in $shell" }
+            }
+          } finally { Stop-Process -Id $server.Id -Force }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-package
+          path: |
+            served/status-quo-setup.exe
+            served/status-quo-setup.exe.sha256
+          retention-days: 30
+
+  install-proof:
+    # One name that is green only when every real install above passed.
+    if: always()
+    needs: [linux-package, linux-install, linux-user, windows-package]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - run: |
+          echo '${{ toJSON(needs) }}'
+          [ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped') }}" = false ]

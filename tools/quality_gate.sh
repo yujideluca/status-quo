@@ -7,7 +7,7 @@ SECONDS=0
 step() { printf '\n== %s\n' "$1"; }
 step "1 Rust formatting"
 cargo fmt --all -- --check
-rustfmt --check --edition 2021 tools/rust_architecture.rs tools/resource_check.rs
+rustfmt --check --edition 2021 tools/rust_architecture.rs tools/resource_check.rs tools/check_binary.rs
 step "1b test scratch folders delete themselves"
 # A test that builds temp_dir()/name-PID by hand leaves it behind when it fails or forgets to remove
 # it, and a rerun has a new PID, so the folders pile up in /tmp (RAM on this laptop). Test folders
@@ -25,6 +25,9 @@ build/rust-architecture --self-test
 build/rust-architecture
 rustc --edition 2021 -D warnings tools/resource_check.rs -o build/resource-check
 build/resource-check --self-test
+step "3b the program is linked only against the C library (SQ-47)"
+rustc --edition 2021 -D warnings tools/check_binary.rs -o build/check-binary
+build/check-binary --max-glibc 9.99 target/debug/status-quo
 step "4 requirement traceability"
 tools/pipeline-check.sh --traceability
 git diff --quiet -- docs/TRACEABILITY.md || { echo "docs/TRACEABILITY.md changed: commit the regenerated matrix"; exit 1; }
