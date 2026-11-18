@@ -17,6 +17,28 @@ pub fn level(layer: Layer) -> egui::WindowLevel {
         Layer::Above => egui::WindowLevel::AlwaysOnTop,
     }
 }
+/// The window level used for a layer setting. A floating window is an ordinary window: held
+/// behind the others it could never be brought to the front, so "Behind" counts as "Normal"
+/// there (SQ-48).
+pub fn level_for(layer: Layer, floating: bool) -> egui::WindowLevel {
+    match (layer, floating) {
+        (Layer::Behind, true) => egui::WindowLevel::Normal,
+        _ => level(layer),
+    }
+}
+/// Where a window must go to lie completely inside the free part of the screen (the screen
+/// without the taskbar). `None`: it already does.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn fitted(outer: egui::Rect, area: egui::Rect) -> Option<egui::Rect> {
+    let size = outer.size().min(area.size());
+    let max = area.max - size;
+    let position = egui::pos2(
+        outer.min.x.clamp(area.min.x, max.x.max(area.min.x)),
+        outer.min.y.clamp(area.min.y, max.y.max(area.min.y)),
+    );
+    let fitted = egui::Rect::from_min_size(position, size);
+    (fitted != outer).then_some(fitted)
+}
 #[cfg(not(target_os = "linux"))]
 pub fn capabilities() -> String {
     "Windows: the Window layer setting keeps it behind or above other windows. On the desktop background, drag the empty part of the top row to move it."
@@ -293,6 +315,36 @@ mod tests {
             name: format!("display-{x}"),
             rect: egui::Rect::from_min_size(egui::pos2(x, 0.0), egui::vec2(width, 1080.0)),
         }
+    }
+    // REQ SQ-48
+    #[test]
+    fn a_floating_window_is_never_held_behind_and_a_window_under_the_taskbar_is_pulled_back() {
+        use egui::WindowLevel::{AlwaysOnBottom, AlwaysOnTop, Normal};
+        assert_eq!(level_for(Layer::Behind, false), AlwaysOnBottom);
+        assert_eq!(level_for(Layer::Behind, true), Normal);
+        assert_eq!(level_for(Layer::Normal, true), Normal);
+        assert_eq!(level_for(Layer::Above, true), AlwaysOnTop);
+        assert_eq!(level_for(Layer::Above, false), AlwaysOnTop);
+        // A 1280x800 screen whose taskbar takes the lowest 48 points.
+        let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1280.0, 752.0));
+        let inside = egui::Rect::from_min_size(egui::pos2(504.0, 16.0), egui::vec2(760.0, 720.0));
+        assert_eq!(fitted(inside, area), None);
+        let low = egui::Rect::from_min_size(egui::pos2(504.0, 47.0), egui::vec2(760.0, 720.0));
+        assert_eq!(
+            fitted(low, area),
+            Some(egui::Rect::from_min_size(
+                egui::pos2(504.0, 32.0),
+                egui::vec2(760.0, 720.0)
+            ))
+        );
+        let tall = egui::Rect::from_min_size(egui::pos2(600.0, 16.0), egui::vec2(776.0, 900.0));
+        assert_eq!(
+            fitted(tall, area),
+            Some(egui::Rect::from_min_size(
+                egui::pos2(504.0, 0.0),
+                egui::vec2(776.0, 752.0)
+            ))
+        );
     }
     // REQ SQ-15 SQ-22
     #[test]

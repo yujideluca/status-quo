@@ -36,5 +36,9 @@ The plain window stops being the fallback people meet. Giovanni reported that th
 * Wayland without layer-shell (GNOME) uses the X11 host through XWayland instead of the plain window. Mutter accepts the same hints as an X11 session.
 * The host is fixed when the window is created, so a change of the setting restarts the panel. On Linux the process replaces itself (`exec`), which keeps the process the login service watches. On Windows a new panel starts, waits for the panel lock, and the old one closes.
 * Rejected: changing decorations and stacking of the live window (the layer-shell surface and the framed window are created by different event loops, and X11 hints are applied once after mapping); making the floating window a per-platform default (the report was exactly that default).
+* Windows brings a window to the front at every click, and the window level alone is applied only when it changes. The Windows host therefore wraps the window procedure and answers every reordering request with "bottom" while the layer is Behind (`host/windows.rs`); the hold is lifted before another layer is applied.
+* A floating window is an ordinary window: with it the Behind layer works like Normal, on every system (`native::level_for`). Held behind, a titled window could never be brought to the front.
+* Windows: the first position and every restored position stay inside the free part of the screen, above the taskbar (`host::windows::work_area`, `native::fitted`).
+* Windows without usable OpenGL (virtual machines, remote sessions) draws through DirectX, which cannot make the window see-through: the background is then drawn solid and Customize says that Background opacity has no effect there.
 * Known limit: on Windows the *Show desktop* shortcut (Win+D) hides the panel like any window until a window is activated again. Drawing behind the desktop icons would avoid it and is not done.
 

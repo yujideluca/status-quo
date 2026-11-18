@@ -176,7 +176,7 @@ cargo build --release --locked -p status-quo
 target\release\status-quo.exe install
 ```
 
-What is different on Windows: the tray is a frameless window kept below your other windows, with no taskbar button (drag the empty part of its top row to move it; the *Window layer* setting can put it above others; the *Show desktop* shortcut Win+D hides it like any window until you click a window again); the collector and panel talk through a private port on your own machine protected by a random token; CPU and memory come from Windows, every graphics card of any maker from the Windows performance counters (the ones Task Manager uses); the CPU temperature is **unavailable** because Windows offers none without a driver. No administrator rights are used.
+What is different on Windows: the tray is a frameless window kept below your other windows, with no taskbar button (it stays behind also when you click it, and ends above the taskbar; drag the empty part of its top row to move it; the *Window layer* setting can put it above others; the *Show desktop* shortcut Win+D hides it like any window until you click a window again); the collector and panel talk through a private port on your own machine protected by a random token; CPU and memory come from Windows, every graphics card of any maker from the Windows performance counters (the ones Task Manager uses); the CPU temperature is **unavailable** because Windows offers none without a driver. No administrator rights are used.
 
 ## What `install` does
 

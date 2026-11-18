@@ -7,7 +7,7 @@ Back to the [tour](../../README.md). Everything here is in **Customize**; nothin
 * **Mode:** Dark, Light or System (follows the desktop).
 * **Palette:** background, text, accent, muted, warning and error, each with a colour picker.
 * **Follow the wallpaper colours.** One checkbox. Status Quo shrinks your wallpaper to 64 pixels, takes its dominant hue and builds a palette for the mode you chose, moving every colour until it reads well on the background (text at least 7:1, the others at least 4.5:1). While it is on, the swatches show the colours actually in use and cannot be edited. A grey wallpaper gives a neutral palette, because a hue that is not there is never invented. If the picture cannot be found or read, your palette stays in use and the reason is printed next to the checkbox.
-* **Opacity** (background only, text stays sharp), **font size** (10 to 32), **compact spacing**, and the **space between widgets** (one value for the whole tray).
+* **Opacity** (background only, text stays sharp; on a Windows computer without working OpenGL, such as a virtual machine, the background stays solid and Customize says so), **font size** (10 to 32), **compact spacing**, and the **space between widgets** (one value for the whole tray).
 * **Per widget:** tick *Override widget appearance* on a widget to give it its own look, including its own wallpaper option.
 
 ### Which wallpaper does it read?
@@ -35,7 +35,7 @@ Readable formats: PNG, JPEG, BMP and WebP. Not supported: JPEG XL and AVIF pictu
 
 | Setting | Where | Meaning |
 |---|---|---|
-| Window layer | Customize → Desktop behavior | Behind (default), Normal or Above other windows |
+| Window layer | Customize → Desktop behavior | Behind (default), Normal or Above other windows. In a floating window, Behind works like Normal |
 | Floating window | same, or `status-quo floating on` / `off` in a terminal | off by default: the tray sits on the desktop background without a title bar. On: an ordinary window you can move, minimize and close. The tray restarts by itself when you save |
 | Start at login | same | on by default |
 | `STATUS_QUO_HOST` | environment | force `layer-shell`, `x11`, `windows-desktop` or `window` when it can work |

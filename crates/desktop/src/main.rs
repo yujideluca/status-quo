@@ -265,7 +265,7 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
     let framed = selection.backend == host::Backend::Window;
-    let layer = native::level(config.layer);
+    let layer = native::level_for(config.layer, config.floating);
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Status Quo")
         .with_app_id("status-quo")
@@ -528,6 +528,9 @@ struct App {
     /// Windows: whether the window is currently held behind the others (None: not set yet).
     #[cfg_attr(not(windows), allow(dead_code))]
     kept_behind: Option<bool>,
+    /// Windows: the saved position was checked against the taskbar once.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    fitted: bool,
 }
 impl App {
     fn new(
@@ -584,6 +587,7 @@ impl App {
             restart_on_floating: false,
             place_default: false,
             kept_behind: None,
+            fitted: false,
         }
     }
     fn intent(&mut self, intent: Intent) {
@@ -665,7 +669,7 @@ impl eframe::App for App {
         {
             use raw_window_handle::{HasWindowHandle, RawWindowHandle};
             let behind = matches!(
-                native::level(self.tray.config.layer),
+                native::level_for(self.tray.config.layer, self.floating),
                 egui::WindowLevel::AlwaysOnBottom
             );
             if self.kept_behind != Some(behind) {
@@ -763,10 +767,38 @@ impl App {
                 )));
             }
         }
+        // Windows: a saved position can end under the taskbar (the title bar of a floating
+        // window adds height, the taskbar may have moved): once per start it is pulled back.
+        #[cfg(windows)]
+        if !self.place_default
+            && !self.fitted
+            && self.started.elapsed() >= Duration::from_millis(1500)
+        {
+            let (outer, inner) = ctx.input(|i| (i.viewport().outer_rect, i.viewport().inner_rect));
+            if let (Some(outer), Some(inner), Some(a)) = (outer, inner, host::windows::work_area())
+            {
+                self.fitted = true;
+                let scale = ctx.native_pixels_per_point().unwrap_or(1.0).max(0.5);
+                let area = egui::Rect::from_min_max(
+                    egui::pos2(a[0] as f32 / scale, a[1] as f32 / scale),
+                    egui::pos2(a[2] as f32 / scale, a[3] as f32 / scale),
+                );
+                if let Some(target) = native::fitted(outer, area) {
+                    let frame = outer.size() - inner.size();
+                    if target.size() != outer.size() {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(
+                            target.size() - frame,
+                        ));
+                    }
+                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(target.min));
+                }
+            }
+        }
         if self.layer != self.tray.config.layer {
             self.layer = self.tray.config.layer;
-            ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(native::level(
+            ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(native::level_for(
                 self.layer,
+                self.floating,
             )));
         }
         if !self.tray.fullscreen_edit {

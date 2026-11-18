@@ -865,6 +865,9 @@ impl Tray {
                 ui.checkbox(&mut draft.floating, FLOATING_LABEL).on_hover_text(
                     "Off: the tray sits on the desktop background, without a title bar. On: it is a normal window you can move, minimize and close. The tray restarts by itself when you save.",
                 );
+                if draft.floating && draft.layer == Layer::Behind {
+                    ui.label(RichText::new(FLOATING_BEHIND_NOTE).small());
+                }
                 ui.label(&self.capabilities);
                 ui.checkbox(&mut draft.navigation, "Enable links and project navigation");
                 ui.checkbox(&mut draft.autostart, "Start at login");
@@ -1897,6 +1900,9 @@ pub fn reset_label(reset: i64, now: i64) -> String {
 }
 /// Shown under the appearance settings when the host cannot draw a see-through window.
 pub const OPAQUE_NOTE: &str = "This computer draws the panel without OpenGL, so the background cannot be see-through here: Background opacity has no effect.";
+/// Shown when the floating window is chosen together with the Behind layer.
+pub const FLOATING_BEHIND_NOTE: &str =
+    "A floating window is never held behind the others: with it, Behind works like Normal.";
 /// Text of the Customize switch that turns the tray into an ordinary window (SQ-48).
 pub const FLOATING_LABEL: &str = "Floating window (a normal window with a title bar)";
 #[cfg(test)]
