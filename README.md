@@ -18,7 +18,7 @@ You do not need to know GitHub, programming or anything technical. You copy **on
 Linux (paste with `Ctrl` + `Shift` + `V`):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.sh | bash
+{ curl -fsSL https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.sh 2>/dev/null || wget -qO- https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.sh; } | sh
 ```
 
 Windows, in PowerShell (paste with a right-click):
@@ -29,22 +29,27 @@ irm https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.ps1 |
 
 **Step 3. Wait a minute.** Lines of text scroll by; that is normal. At the end the tray appears on your desktop.
 
-**Did it work?** You see the panel on your desktop. To get a plain-words health report at any time, type `status-quo doctor`.
+**Did it work?** You see the panel on your desktop. To get a plain-words health report at any time, type `~/.local/bin/status-quo doctor` (Linux) or `& "$env:LOCALAPPDATA\status-quo\bin\status-quo.exe" doctor` (Windows).
+
+**Prefer a download to a terminal?** Windows: download [status-quo-setup.exe](https://github.com/yujideluca/status-quo/releases/latest/download/status-quo-setup.exe) and double-click it. Windows may show a blue box, "Windows protected your PC", because the file is new and unsigned: click **More info**, then **Run anyway**. The pasted line above does not show that box.
+
+**What it runs on.** Windows 10 and 11 (64-bit). Linux with an Intel/AMD or ARM 64-bit processor: Ubuntu 18.04 or newer, Debian 11 or newer, Mint, Fedora, Rocky/Alma/RHEL 8 or newer, Arch, openSUSE, Void and their relatives. Nothing has to be installed beforehand: the installer brings the libraries the panel needs. Before every release, this exact line is run on a bare copy of each of those systems and the panel must come up, or the release is not published.
 
 **Something went wrong?**
 
 | What you see | What to do |
 |---|---|
-| `curl: command not found` (Linux) | Type `sudo apt-get install -y curl` (Debian, Ubuntu, Mint) or install `curl` with your system's package manager, then paste the line again |
+| `curl or wget is needed` (Linux) | Rare: this system has no download tool at all. Install one with your package manager, for example `sudo apt-get install -y wget`, then paste the line again |
+| `Status Quo was installed, but the panel did not start` | The lines above that message say why, in plain words. Fix what they name, then type `~/.local/bin/status-quo launch --verify` |
 | `checksum does not match` | The download was damaged. Nothing was installed. Paste the line again |
-| Red text mentioning a release (Windows) | Your connection failed or the download is not available yet. Try again in a few minutes |
+| Red text: `The download did not arrive` (Windows) | Your connection failed. The window stays open: paste the line again |
 | It asks for your password (Linux) | Normal when a system library is missing: the installer installs it for you (once, with your password). Rust, if it is ever needed, is installed automatically too: on processors other than the common x86-64 type, Status Quo is built on your machine and the installer fetches the compiler by itself |
 | Anything else | See [When something looks off](#8-when-something-looks-off) |
 
 **Remove it any time.** Your settings and history stay on your computer.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.sh | bash -s -- --uninstall
+~/.local/bin/status-quo uninstall
 ```
 
 On Windows: `& "$env:LOCALAPPDATA\status-quo\bin\status-quo.exe" uninstall`
@@ -89,7 +94,7 @@ Nothing is sent anywhere. There are no analytics, no generated summaries and no 
 
 ## 2. Put it on your computer
 
-**The fastest way is the one-line install at the top of this page.** If you would rather download the files yourself, open the [Releases page](https://github.com/yujideluca/status-quo/releases/latest) and take `status-quo-linux-x86_64.tar.gz` (Linux: unpack it, then run `bash install.sh` inside) or `status-quo-setup.exe` (Windows: double-click it). Add `--dry-run` to any installer to see every step without doing it. The installer inside also installs, with your system's package manager, any drawing library (X11, Wayland, OpenGL) your computer lacks.
+**The fastest way is the one-line install at the top of this page.** If you would rather download the files yourself, open the [Releases page](https://github.com/yujideluca/status-quo/releases/latest) and take `status-quo-linux-x86_64.tar.gz` (Linux on Intel/AMD; `status-quo-linux-aarch64.tar.gz` on ARM: unpack it, then run `sh install.sh` inside) or `status-quo-setup.exe` (Windows: double-click it). Add `--dry-run` to any installer to see every step without doing it. The installer inside also installs, with your system's package manager, any drawing library (X11, Wayland, OpenGL) your computer lacks.
 
 **Building it yourself: one command.** It checks your computer, installs what is missing, builds the program, installs it for your user only, starts it and prints a compatibility report.
 

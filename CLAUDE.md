@@ -10,6 +10,7 @@ Status Quo is Giovanni's all-Rust Linux desktop widget tray. KDE is the first wr
 3. `tools/quality_gate.sh` defines passing. CI calls the pinned shared runner, reads `pipeline-check.toml` and fails on `falha`. Do not weaken limits, disable tests or relabel unverified behavior.
 4. Shared tools stay in their own repository and are consumed at a pinned version. Do not copy the shared pipeline implementation.
 5. Structural decisions get ADRs and a dated `DESIGN.md` row. Never write credentials, conversations or private memory feeds into fixtures, diagnostics, browser demos or wiki examples.
+6. Only a real run is proof (SQ-47, ADR-0006). "Works", "installs" or "fixed" may be said about the installers, the release downloads or the panel only after the real command a person uses was run on a clean machine and the result was seen: for installers, the README line on the bare systems of `.github/workflows/packages.yml` (and, for a release, the `published-*` jobs of `release.yml`). A dry run, a stand-in program, a faked environment variable or a unit test proves the script's branching and nothing else; reporting it as proof that installation works is forbidden. If the real run could not be done, the report starts with "NOT proven" and says what was not run. Never add `--dry-run` to a workflow, never remove an image from the install matrix to make it green, never publish a release whose install jobs did not pass.
 
 ## Working rules
 

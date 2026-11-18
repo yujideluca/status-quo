@@ -255,7 +255,7 @@ fn the_installers_and_every_option_they_accept_are_documented_and_real() {
         read("crates/desktop/src/main.rs").contains("status-quo doctor"),
         "doctor is missing from --help"
     );
-    assert!(read(".github/workflows/quality-gate.yml").contains("status-quo-setup-windows"));
+    assert!(read(".github/workflows/packages.yml").contains("status-quo-setup.exe"));
     assert!(read(".github/workflows/release.yml").contains("status-quo-setup.exe"));
     // Every package manager the guide names is one the script handles.
     for manager in ["apt-get", "dnf", "pacman", "zypper"] {
@@ -280,7 +280,11 @@ fn the_project_is_mit_licensed_and_workflow_actions_are_pinned_to_commits() {
     for entry in std::fs::read_dir(root().join(".github/workflows")).unwrap() {
         let path = entry.unwrap().path();
         let text = std::fs::read_to_string(&path).unwrap();
-        for line in text.lines().filter(|l| l.contains("uses:")) {
+        // A workflow of this repository ("./...") is the same commit by definition.
+        for line in text
+            .lines()
+            .filter(|l| l.contains("uses:") && !l.contains("uses: ./"))
+        {
             let reference = line.split('@').nth(1).unwrap_or("");
             let sha: String = reference
                 .chars()
@@ -301,7 +305,11 @@ fn every_release_carries_the_prebuilt_packages_and_the_docs_point_to_them() {
     let workflow = read(".github/workflows/release.yml");
     let readme = read("README.md");
     let guide = read("docs/guide/install.md");
-    for asset in ["status-quo-linux-x86_64.tar.gz", "status-quo-setup.exe"] {
+    for asset in [
+        "status-quo-linux-x86_64.tar.gz",
+        "status-quo-linux-aarch64.tar.gz",
+        "status-quo-setup.exe",
+    ] {
         assert!(
             workflow.contains(asset),
             "release.yml does not publish {asset}"
@@ -310,7 +318,7 @@ fn every_release_carries_the_prebuilt_packages_and_the_docs_point_to_them() {
         assert!(guide.contains(asset), "install guide does not name {asset}");
     }
     assert!(
-        workflow.contains("tools/install-prebuilt.sh"),
+        read("tools/package-linux.sh").contains("tools/install-prebuilt.sh"),
         "the Linux package must carry the prebuilt installer"
     );
     for flag in ["--dry-run", "--no-launch", "--adopt", "--uninstall"] {
@@ -325,7 +333,7 @@ fn every_release_carries_the_prebuilt_packages_and_the_docs_point_to_them() {
 #[test]
 fn the_readme_starts_with_the_two_one_paste_commands_and_they_are_real() {
     let readme = read("README.md");
-    let linux = "curl -fsSL https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.sh | bash";
+    let linux = "{ curl -fsSL https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.sh 2>/dev/null || wget -qO- https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.sh; } | sh";
     let windows =
         "irm https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.ps1 | iex";
     assert!(
@@ -344,4 +352,69 @@ fn the_readme_starts_with_the_two_one_paste_commands_and_they_are_real() {
     assert!(read("tools/get.ps1").contains("status-quo-setup.exe"));
     assert!(read("docs/guide/install.md").contains("tools/get.sh"));
     assert!(read(".github/workflows/release.yml").contains("status-quo-linux-x86_64.tar.gz.sha256"));
+}
+
+// REQ SQ-47
+#[test]
+fn installation_is_proven_by_real_runs_never_by_dry_runs() {
+    let packages = read(".github/workflows/packages.yml");
+    let release = read(".github/workflows/release.yml");
+    // No workflow may count a simulated installation.
+    for entry in std::fs::read_dir(root().join(".github/workflows")).unwrap() {
+        let path = entry.unwrap().path();
+        let text = std::fs::read_to_string(&path).unwrap();
+        for line in text.lines().filter(|l| !l.trim_start().starts_with('#')) {
+            assert!(
+                !line.contains("--dry-run") && !line.contains("--check-only"),
+                "{}: a dry run proves nothing about installation: {line}",
+                path.display()
+            );
+        }
+    }
+    // The tests run the line people paste, taken from the README itself.
+    for kind in ["readme-command.sh linux", "readme-command.sh windows"] {
+        assert!(packages.contains(kind), "packages.yml does not run: {kind}");
+        assert!(release.contains(kind), "release.yml does not run: {kind}");
+    }
+    for test in ["linux-bare.sh", "linux-host.sh", "windows.ps1"] {
+        assert!(packages.contains(test), "packages.yml does not run {test}");
+        let script = read(&format!("tools/install-test/{test}"));
+        assert!(script.contains("PROVEN"), "{test}");
+        for fake in ["STUB", "--dry-run", "SQ_ASSUME", "SQ_OS_RELEASE"] {
+            assert!(!script.contains(fake), "{test} simulates with {fake}");
+        }
+    }
+    // Every distribution family and both Windows shells are met for real.
+    for system in [
+        "ubuntu:18.04",
+        "ubuntu:24.04",
+        "debian:11",
+        "fedora:latest",
+        "rockylinux:8",
+        "archlinux:latest",
+        "opensuse/leap",
+        "opensuse/tumbleweed",
+        "void-glibc",
+        "ubuntu-24.04-arm",
+        "'powershell', 'pwsh'",
+    ] {
+        assert!(
+            packages.contains(system),
+            "the install matrix lost {system}"
+        );
+    }
+    // Both downloads are checked for libraries a clean system lacks.
+    assert!(packages.contains("check-binary.exe target/release/status-quo.exe"));
+    assert!(read("tools/package-linux.sh").contains("check-binary --max-glibc 2.17"));
+    assert!(read(".cargo/config.toml").contains("+crt-static"));
+    // Nothing is published before the real installs pass, and the published release is run too.
+    let publish = release.split("\n  publish:").nth(1).expect("publish job");
+    assert!(
+        publish.contains("needs: packages"),
+        "publishing must wait for the real installs"
+    );
+    assert!(release.contains("published-linux") && release.contains("published-windows"));
+    assert!(packages.contains("install-proof"));
+    // The bare test proves the system was bare before it trusts the result.
+    assert!(read("tools/install-test/linux-bare.sh").contains("would not prove a clean install"));
 }

@@ -6,10 +6,10 @@ Back to the [tour](../../README.md). Two automatic installers do everything on t
 
 ### One paste: `tools/get.sh` and `tools/get.ps1`
 
-One line in a terminal, nothing to clone, no Rust. On Linux (`tools/get.sh`) it downloads `status-quo-linux-x86_64.tar.gz` from the latest release, checks its SHA-256 checksum and runs the `install.sh` inside it; when there is no prebuilt package for the machine (no release yet, or a processor other than x86_64) it runs the source installer below instead. On Windows (`tools/get.ps1`) it downloads `status-quo-setup.exe`, checks its checksum and runs it. Options pass through to the installer that runs: `... | bash -s -- --dry-run`.
+One line in a terminal, nothing to clone, no Rust. On Linux (`tools/get.sh`) it downloads the package for the machine's processor (`status-quo-linux-x86_64.tar.gz` or `status-quo-linux-aarch64.tar.gz`) from the latest release, checks its SHA-256 checksum and runs the `install.sh` inside it; when there is no prebuilt package for the machine (a processor other than x86-64 and ARM64, or a system built on musl such as Alpine) it runs the source installer below instead. It needs only `curl` or `wget` and any POSIX shell. On Windows (`tools/get.ps1`) it downloads `status-quo-setup.exe`, checks its checksum and runs it. Options pass through to the installer that runs: `... | sh -s -- --dry-run`.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.sh | bash
+{ curl -fsSL https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.sh 2>/dev/null || wget -qO- https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.sh; } | sh
 ```
 
 ```powershell
@@ -22,23 +22,25 @@ The [Releases page](https://github.com/yujideluca/status-quo/releases/latest) ca
 
 | File | System | What it does |
 |---|---|---|
-| `status-quo-linux-x86_64.tar.gz` | Linux on x86_64 | unpack it and run `install.sh` inside: installs for your user only (no `sudo`), starts it and runs `status-quo doctor` |
+| `status-quo-linux-x86_64.tar.gz`, `status-quo-linux-aarch64.tar.gz` | Linux on Intel/AMD or ARM 64-bit | unpack it and run `install.sh` inside: installs the system libraries that are missing, installs the program for your user only, starts it, confirms the panel stayed up and runs `status-quo doctor` |
 | `status-quo-setup.exe` | Windows 10 or 11 | described under Windows below |
 
 ```sh
 tar -xzf status-quo-linux-x86_64.tar.gz
-bash status-quo-linux-x86_64/install.sh
+sh status-quo-linux-x86_64/install.sh
 ```
 
 | Option | Meaning |
 |---|---|
 | `--dry-run` | print every step instead of doing it |
 | `--no-launch` | install but do not start it now |
-| `--no-deps` | never use `sudo`: you install the system libraries yourself |
+| `--no-deps` | never ask for a password: you install the system libraries yourself |
 | `--adopt` | take over a program file that was copied there by hand (a backup is kept) |
 | `--uninstall` | remove Status Quo (settings and history stay) |
 
-The program loads X11 or Wayland and OpenGL from the system when it starts. The installer installs any that is missing with `apt-get`, `dnf`, `pacman` or `zypper` (the password is asked once, only then); `status-quo doctor` reports what is still missing. The package was built on Ubuntu 22.04, so it runs on systems with glibc 2.35 or newer. Other architectures: use the source installer below.
+The program loads X11 or Wayland and OpenGL from the system when it starts. The installer asks the program which of them are missing (`status-quo doctor --libs`) and installs the packages that hold them with `apt-get`, `dnf` (or `yum`), `pacman`, `zypper` or `xbps-install`, as the administrator through `sudo`, `doas` or `su` (the password is asked once, only then). A library that cannot be installed never stops the installation; `status-quo doctor` then says in plain words what is left. After installing, the installer starts the panel with `status-quo launch --verify` and reports an error if it did not stay up. With systemd the panel runs as a login service of your user; without systemd it runs as an ordinary background program. The packages are built on an old base system (glibc 2.17) and checked by `tools/check_binary.rs`, so they start on old and new distributions alike. Other processors and musl systems: use the source installer below.
+
+**How this is proven.** `.github/workflows/packages.yml` runs the install line of the README, as written, on bare base images of Ubuntu 18.04 to 24.04, Debian 11 to 13, Fedora, Rocky 8 and 9, AlmaLinux 10, Arch, openSUSE Leap and Tumbleweed and Void, on ARM64, on a full Ubuntu as an ordinary user with `sudo` and systemd, and on Windows in Windows PowerShell 5.1 and PowerShell 7. Each run must end with the real panel running and drawing. A release is published only after all of them pass, and `release.yml` then repeats the line against the published release. Dry runs and stand-in programs are not accepted as proof that the installation works.
 
 ### Linux: `tools/install.sh`
 

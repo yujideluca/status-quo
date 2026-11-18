@@ -127,7 +127,7 @@ td code,.say code{color:var(--rose-hi)}
   </div>
   <div class="say"><p><b>The fast way: copy one line, paste it in a terminal, press Enter.</b> No GitHub knowledge, no Rust. It downloads Status Quo, checks the download, installs it for your user only and opens it. Linux: press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd>. Windows: Start, type <code>PowerShell</code>, Enter.</p></div>
 <pre><button type="button">copy</button><span class="c"># Linux</span>
-curl -fsSL https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.sh | bash</pre>
+{ curl -fsSL https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.sh 2&gt;/dev/null || wget -qO- https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.sh; } | sh</pre>
 <pre><button type="button">copy</button><span class="c"># Windows (PowerShell)</span>
 irm https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.ps1 | iex</pre>
   <div class="say"><p>Add <code>--dry-run</code> to see every step without doing it, <code>--check-only</code> (Linux) or <code>--check</code> (Windows) to only look, <code>--uninstall</code> to remove it. The report is also a command: <code>status-quo doctor</code>.</p></div>
