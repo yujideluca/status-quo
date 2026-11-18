@@ -153,60 +153,107 @@ fn help_bad_options_uninstall_and_missing_rust_behave() {
 fn prebuilt_script() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tools/install-prebuilt.sh")
 }
-/// The prebuilt package layout: the script next to a `status-quo` file. The file is a stub, so
-/// a dry run proves what would be executed without installing anything.
+/// A stand-in for the packaged program. Like the real one it answers `doctor --libs` with the
+/// libraries that are missing (here: whatever STUB_MISSING holds), and it fails `launch` when
+/// STUB_LAUNCH_FAILS is set. Everything else succeeds silently.
+const STUB: &str = "#!/bin/sh\n\
+    if [ \"$1 $2\" = \"doctor --libs\" ]; then printf '%s' \"$STUB_MISSING\"; fi\n\
+    if [ \"$1\" = launch ] && [ -n \"$STUB_LAUNCH_FAILS\" ]; then echo 'no OpenGL here' >&2; exit 1; fi\n\
+    exit 0\n";
+fn write_program(path: &std::path::Path, text: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, text).unwrap();
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+}
+/// One run of the prebuilt installer in a scratch folder.
+struct Prebuilt<'a> {
+    with_binary: bool,
+    args: &'a [&'a str],
+    os_release: &'a str,
+    /// What the stub program reports as missing libraries.
+    missing: &'a str,
+    /// Extra environment (DISPLAY, STUB_LAUNCH_FAILS).
+    env: &'a [(&'a str, &'a str)],
+    /// Fake commands placed first on PATH: (name, script).
+    fakes: &'a [(&'a str, &'a str)],
+    /// PATH holds only the fakes and the handful of basic tools the script itself uses, so no
+    /// package manager of the machine running the test is visible.
+    bare_path: bool,
+}
+impl Default for Prebuilt<'_> {
+    fn default() -> Self {
+        Self {
+            with_binary: true,
+            args: &[],
+            os_release: "ID=ubuntu\nID_LIKE=debian\n",
+            missing: "",
+            env: &[],
+            fakes: &[],
+            bare_path: false,
+        }
+    }
+}
+impl Prebuilt<'_> {
+    fn run(&self, name: &str) -> (bool, String) {
+        let dir = scratch(name);
+        fs::copy(prebuilt_script(), dir.join("install.sh")).unwrap();
+        if self.with_binary {
+            write_program(&dir.join("status-quo"), STUB);
+        }
+        // The "installed" program the script starts and checks after installing.
+        write_program(&dir.join("home/.local/bin/status-quo"), STUB);
+        let osr = dir.join("os-release");
+        fs::write(&osr, self.os_release).unwrap();
+        let bin = dir.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        for (command, text) in self.fakes {
+            write_program(&bin.join(command), text);
+        }
+        let path = if self.bare_path {
+            for tool in [
+                "sh", "uname", "dirname", "basename", "sed", "head", "tr", "id", "chmod", "mkdir",
+                "cp", "rm",
+            ] {
+                let real = ["/usr/bin", "/bin"]
+                    .iter()
+                    .map(|d| PathBuf::from(d).join(tool))
+                    .find(|p| p.exists())
+                    .unwrap_or_else(|| panic!("{tool} not found"));
+                std::os::unix::fs::symlink(real, bin.join(tool)).unwrap();
+            }
+            bin.display().to_string()
+        } else {
+            format!("{}:/usr/bin:/bin", bin.display())
+        };
+        let out = Command::new("sh")
+            .arg(dir.join("install.sh"))
+            .args(self.args)
+            .env("HOME", dir.join("home"))
+            .env("PATH", path)
+            .env("SQ_OS_RELEASE", &osr)
+            .env("STUB_MISSING", self.missing)
+            .env_remove("STUB_LAUNCH_FAILS")
+            .env_remove("WAYLAND_DISPLAY")
+            .env_remove("DISPLAY")
+            .envs(self.env.iter().copied())
+            .output()
+            .unwrap();
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        (out.status.success(), text)
+    }
+}
 fn run_prebuilt(name: &str, with_binary: bool, args: &[&str]) -> (bool, String) {
-    run_prebuilt_on(name, with_binary, args, "ID=ubuntu\nID_LIKE=debian\n", "0")
-}
-fn run_prebuilt_on(
-    name: &str,
-    with_binary: bool,
-    args: &[&str],
-    os_release: &str,
-    libs_missing: &str,
-) -> (bool, String) {
-    run_prebuilt_with(name, with_binary, args, os_release, libs_missing, None)
-}
-fn run_prebuilt_with(
-    name: &str,
-    with_binary: bool,
-    args: &[&str],
-    os_release: &str,
-    libs_missing: &str,
-    ldconfig_list: Option<&str>,
-) -> (bool, String) {
-    let dir = scratch(name);
-    fs::copy(prebuilt_script(), dir.join("install.sh")).unwrap();
-    if with_binary {
-        fs::write(dir.join("status-quo"), "#!/bin/sh\nexit 0\n").unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(dir.join("status-quo"), fs::Permissions::from_mode(0o755)).unwrap();
+    Prebuilt {
+        with_binary,
+        args,
+        ..Prebuilt::default()
     }
-    let osr = dir.join("os-release");
-    fs::write(&osr, os_release).unwrap();
-    let mut cmd = Command::new("bash");
-    if let Some(list) = ldconfig_list {
-        let file = dir.join("ldconfig.txt");
-        fs::write(&file, list).unwrap();
-        cmd.env("SQ_LDCONFIG_LIST", file);
-    }
-    let out = cmd
-        .arg(dir.join("install.sh"))
-        .args(args)
-        .env("HOME", dir.join("home"))
-        .env("SQ_OS_RELEASE", &osr)
-        .env_remove("SQ_ASSUME_MISSING_LIBS")
-        .envs((!libs_missing.is_empty()).then_some(("SQ_ASSUME_MISSING_LIBS", libs_missing)))
-        .env_remove("WAYLAND_DISPLAY")
-        .env_remove("DISPLAY")
-        .output()
-        .unwrap();
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    (out.status.success(), text)
+    .run(name)
 }
 
 // REQ SQ-45
@@ -252,9 +299,7 @@ fn fake_release(dir: &std::path::Path, good_checksum: bool) -> PathBuf {
     fs::create_dir_all(&rel).unwrap();
     fs::create_dir_all(&pkg).unwrap();
     fs::copy(prebuilt_script(), pkg.join("install.sh")).unwrap();
-    fs::write(pkg.join("status-quo"), "#!/bin/sh\nexit 0\n").unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(pkg.join("status-quo"), fs::Permissions::from_mode(0o755)).unwrap();
+    write_program(&pkg.join("status-quo"), STUB);
     let tar = rel.join("status-quo-linux-x86_64.tar.gz");
     let ok = Command::new("tar")
         .args(["-czf"])
@@ -279,7 +324,7 @@ fn fake_release(dir: &std::path::Path, good_checksum: bool) -> PathBuf {
     rel
 }
 fn run_get(dir: &std::path::Path, base: &str, args: &[&str]) -> (bool, String) {
-    let out = Command::new("bash")
+    let out = Command::new("sh")
         .arg(get_script())
         .args(args)
         .env("SQ_RELEASE_BASE", base)
@@ -336,7 +381,7 @@ fn one_paste_falls_back_to_the_source_installer_when_no_release_exists() {
         &["--dry-run", "--no-deps"],
     );
     assert!(ok, "{text}");
-    assert!(text.contains("no prebuilt package"), "{text}");
+    assert!(text.contains("no ready-made package"), "{text}");
     assert!(text.contains("1/6") && text.contains("6/6"), "{text}");
 }
 
@@ -349,10 +394,25 @@ fn the_prebuilt_installer_installs_the_missing_system_libraries_itself() {
             "ID=ubuntu\nID_LIKE=debian\n",
             "apt-get install -y libx11-6",
         ),
+        (
+            "lib-mint",
+            "ID=linuxmint\nID_LIKE=\"ubuntu debian\"\n",
+            "apt-get install -y libx11-6",
+        ),
         ("lib-fedora", "ID=fedora\n", "dnf install -y libX11"),
+        (
+            "lib-rocky",
+            "ID=rocky\nID_LIKE=\"rhel centos fedora\"\n",
+            "install -y libX11",
+        ),
         (
             "lib-arch",
             "ID=arch\n",
+            "pacman -S --needed --noconfirm libx11",
+        ),
+        (
+            "lib-manjaro",
+            "ID=manjaro\nID_LIKE=arch\n",
             "pacman -S --needed --noconfirm libx11",
         ),
         (
@@ -360,77 +420,170 @@ fn the_prebuilt_installer_installs_the_missing_system_libraries_itself() {
             "ID=opensuse-tumbleweed\nID_LIKE=\"opensuse suse\"\n",
             "zypper --non-interactive install libX11-6",
         ),
+        ("lib-void", "ID=void\n", "xbps-install -Sy libX11"),
     ] {
-        let (ok, text) = run_prebuilt_on(name, true, &["--dry-run"], os, "1");
+        let (ok, text) = Prebuilt {
+            args: &["--dry-run"],
+            os_release: os,
+            missing: "libX11.so.6\nlibGL.so.1\n",
+            ..Prebuilt::default()
+        }
+        .run(name);
         assert!(ok, "{name}: {text}");
         assert!(
-            text.contains(expect),
+            text.contains(expect) && text.contains("missing: libX11.so.6 libGL.so.1"),
             "{name} should print `{expect}`:\n{text}"
         );
         for forbidden in ["cargo", "rustup", "git clone"] {
             assert!(!text.contains(forbidden), "{name}: {forbidden} in:\n{text}");
         }
     }
-    let (ok, text) = run_prebuilt_on(
-        "lib-skip",
-        true,
-        &["--dry-run", "--no-deps"],
-        "ID=ubuntu\n",
-        "1",
-    );
+    let (ok, text) = Prebuilt {
+        args: &["--dry-run", "--no-deps"],
+        missing: "libX11.so.6\n",
+        ..Prebuilt::default()
+    }
+    .run("lib-skip");
     assert!(
-        ok && text.contains("skipped (--no-deps)") && !text.contains("apt-get"),
+        ok && text.contains("--no-deps") && !text.contains("apt-get"),
         "{text}"
     );
-    let (ok, text) = run_prebuilt_on("lib-unknown", true, &["--dry-run"], "ID=plan9\n", "1");
-    assert!(!ok && text.contains("unknown distribution"), "{text}");
 }
 
 // REQ SQ-45
 #[test]
-fn the_prebuilt_installer_reads_the_library_list_correctly_even_when_it_is_long() {
-    // Regression: `printf | grep -q` under pipefail called every library missing, so the real
-    // installer asked for sudo on computers that had everything.
-    let mut all = String::new();
-    for i in 0..20000 {
-        all.push_str(&format!(
-            "\tlibfiller{i}.so.1 (libc6,x86-64) => /usr/lib/x/libfiller{i}.so.1\n"
-        ));
+fn the_prebuilt_installer_asks_for_nothing_when_the_program_finds_every_library() {
+    // Regression (v0.1.1): the installer asked for the password on computers that had
+    // everything. The program itself now says what it cannot load; nothing missing, no install.
+    let (ok, text) = Prebuilt {
+        args: &["--dry-run"],
+        ..Prebuilt::default()
     }
-    for lib in [
-        "libX11.so.6",
-        "libxcb.so.1",
-        "libxkbcommon.so.0",
-        "libxkbcommon-x11.so.0",
-        "libwayland-client.so.0",
-        "libGL.so.1",
-        "libEGL.so.1",
-        "libXcursor.so.1",
-        "libXi.so.6",
-        "libXrandr.so.2",
-    ] {
-        all.push_str(&format!("\t{lib} (libc6,x86-64) => /usr/lib/x/{lib}\n"));
-    }
-    let (ok, text) = run_prebuilt_with(
-        "lib-present",
-        true,
-        &["--dry-run"],
-        "ID=ubuntu\n",
-        "",
-        Some(&all),
-    );
+    .run("lib-present");
     assert!(
-        ok && text.contains("already installed") && !text.contains("apt-get"),
+        ok && text.contains("already installed")
+            && !text.contains("apt-get")
+            && !text.contains("password"),
         "{text}"
     );
-    let without = all.replace("libEGL.so.1", "libgone.so.1");
-    let (ok, text) = run_prebuilt_with(
-        "lib-one-missing",
-        true,
-        &["--dry-run"],
-        "ID=ubuntu\n",
-        "",
-        Some(&without),
+}
+
+/// A fake `sudo` that refuses, as when the user has no administrator rights or types no password.
+const SUDO_REFUSES: (&str, &str) = ("sudo", "#!/bin/sh\necho 'sudo: refused' >&2\nexit 1\n");
+
+// REQ SQ-47
+#[test]
+fn libraries_that_cannot_be_installed_never_stop_the_installation() {
+    // A real run, not a dry run: the administrator command fails for every package.
+    let (ok, text) = Prebuilt {
+        missing: "libXi.so.6\n",
+        fakes: &[SUDO_REFUSES],
+        ..Prebuilt::default()
+    }
+    .run("lib-refused");
+    assert!(ok, "{text}");
+    for expected in [
+        "trying one package at a time",
+        "could not install libxi6",
+        "still missing: libXi.so.6",
+        "Installing for your user only",
+        "Done.",
+    ] {
+        assert!(text.contains(expected), "`{expected}` not in:\n{text}");
+    }
+    // A distribution nobody has heard of, with no known package manager installed.
+    let (ok, text) = Prebuilt {
+        os_release: "ID=plan9\n",
+        missing: "libXi.so.6\n",
+        bare_path: true,
+        ..Prebuilt::default()
+    }
+    .run("lib-unknown");
+    assert!(
+        ok && text.contains("not one this installer knows") && text.contains("Done."),
+        "{text}"
     );
-    assert!(ok && text.contains("apt-get install -y"), "{text}");
+    // The same unknown distribution with zypper installed: the installed manager is used.
+    let (ok, text) = Prebuilt {
+        args: &["--dry-run"],
+        os_release: "ID=plan9\n",
+        missing: "libXi.so.6\n",
+        fakes: &[("zypper", "#!/bin/sh\nexit 0\n")],
+        bare_path: true,
+        ..Prebuilt::default()
+    }
+    .run("lib-by-command");
+    assert!(
+        ok && text.contains("zypper --non-interactive install"),
+        "{text}"
+    );
+}
+
+// REQ SQ-47
+#[test]
+fn the_installer_confirms_the_panel_started_and_fails_loudly_when_it_did_not() {
+    let display = [("DISPLAY", ":99")];
+    let (ok, text) = Prebuilt {
+        env: &display,
+        ..Prebuilt::default()
+    }
+    .run("launch-ok");
+    assert!(
+        ok && text.contains("The panel is on your desktop now"),
+        "{text}"
+    );
+    let failing = [("DISPLAY", ":99"), ("STUB_LAUNCH_FAILS", "1")];
+    let (ok, text) = Prebuilt {
+        env: &failing,
+        ..Prebuilt::default()
+    }
+    .run("launch-fails");
+    assert!(!ok, "a panel that did not start must not read as success");
+    assert!(
+        text.contains("the panel did not start")
+            && text.contains("no OpenGL here")
+            && !text.contains("The panel is on your desktop now"),
+        "{text}"
+    );
+    // No desktop session in this terminal (SSH, a console): nothing to verify, and no failure.
+    let (ok, text) = Prebuilt::default().run("launch-no-display");
+    assert!(ok && text.contains("opens at your next login"), "{text}");
+}
+
+// REQ SQ-47
+#[test]
+fn the_one_paste_scripts_run_in_a_plain_posix_shell_and_never_close_the_users_window() {
+    let tools = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tools");
+    for script in ["get.sh", "install-prebuilt.sh"] {
+        let text = fs::read_to_string(tools.join(script)).unwrap();
+        assert!(
+            text.starts_with("#!/bin/sh\n"),
+            "{script} must not need bash"
+        );
+        for bashism in [
+            "[[",
+            "<<<",
+            "pipefail",
+            "local ",
+            "BASH_SOURCE",
+            "function ",
+        ] {
+            assert!(!text.contains(bashism), "{script} uses `{bashism}`");
+        }
+    }
+    // Windows: `exit` inside a pasted line closes the user's PowerShell window before the error
+    // can be read, and a checksum read with `.Content` is raw bytes that never compare equal
+    // (both shipped in v0.1.0 to v0.1.2 and made the Windows line fail on every computer).
+    let ps = fs::read_to_string(tools.join("get.ps1")).unwrap();
+    let code: String = ps
+        .lines()
+        .filter(|l| !l.trim_start().starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(!code.contains("exit "), "get.ps1 must not call exit");
+    assert!(
+        !code.contains(".Content"),
+        "get.ps1 must read the checksum from the saved file"
+    );
+    assert!(code.contains("Tls12") && code.contains("'--yes'"), "{code}");
 }

@@ -51,6 +51,13 @@ fn main() {
 fn run() -> Result<(), String> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
+        Some("doctor") if args.get(1).is_some_and(|a| a == "--libs") => {
+            // For the installers: the drawing libraries this computer lacks, one per line.
+            for name in doctor::missing_libraries(doctor::loads) {
+                println!("{name}");
+            }
+            return Ok(());
+        }
         Some("doctor") => std::process::exit(doctor::run()),
         Some("install") => {
             return match args.get(1).map(String::as_str) {
@@ -60,8 +67,11 @@ fn run() -> Result<(), String> {
             }
         }
         Some("uninstall") => return install::uninstall(),
-        Some("launch") => return install::launch(false),
-        Some("login") => return install::launch(true),
+        Some("launch") => {
+            return install::launch(false, args.get(1).is_some_and(|a| a == "--verify"))
+        }
+        Some("login") => return install::launch(true, false),
+        Some("stop") => return install::stop(),
         Some("collect") => {
             return match Service::new(state_root()) {
                 Ok(service) => {
@@ -125,7 +135,7 @@ fn run() -> Result<(), String> {
             return Ok(());
         }
         Some("--help") | Some("help") => {
-            println!("Status Quo\n  status-quo                  Open the desktop panel\n  status-quo doctor           Check that this computer can run Status Quo\n  status-quo collect          Run the shared background collector\n  status-quo inspect          Read collector status as JSON\n  status-quo inspect --widgets Render widget models in a second Rust host\n  status-quo --screenshot PATH Capture this panel's framebuffer and exit\n  status-quo --customize      Open customization");
+            println!("Status Quo\n  status-quo                  Open the desktop panel\n  status-quo doctor           Check that this computer can run Status Quo\n  status-quo launch --verify  Start the panel in the background and confirm it stays up\n  status-quo stop             Close the panel (it opens again at the next login)\n  status-quo collect          Run the shared background collector\n  status-quo inspect          Read collector status as JSON\n  status-quo inspect --widgets Render widget models in a second Rust host\n  status-quo --screenshot PATH Capture this panel's framebuffer and exit\n  status-quo --customize      Open customization");
             return Ok(());
         }
         _ => {}

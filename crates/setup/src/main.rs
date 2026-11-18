@@ -98,7 +98,7 @@ fn windows_version() -> Option<u32> {
 }
 /// The program to run: the embedded copy, or a `status-quo.exe` next to this installer.
 fn unpack() -> Result<PathBuf, String> {
-    let dir = env::temp_dir().join(format!("status-quo-setup-{}", std::process::id())); // scratch-ok: production, the unpacked program must outlive the installer
+    let dir = env::temp_dir().join(format!("status-quo-setup-{}", std::process::id())); // scratch-ok: production, the installer unpacks the program here and removes the folder after installing
     fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     let target = dir.join("status-quo.exe");
     if !PAYLOAD.is_empty() {
@@ -195,6 +195,7 @@ fn real_main(o: &Options) -> Result<(), String> {
     if !run_program(&program, &["install"])? {
         return Err("the installation stopped with an error; the lines above say why".into());
     }
+    let mut started = true;
     if o.launch {
         say("Starting Status Quo");
         let target = if installed.is_file() {
@@ -202,18 +203,34 @@ fn real_main(o: &Options) -> Result<(), String> {
         } else {
             program.clone()
         };
-        if !run_program(&target, &["launch"]).unwrap_or(false) {
-            println!("  [!]   could not start it now; it starts at your next sign-in");
-        }
+        // `launch --verify` returns only after the panel has stayed open, or says why not.
+        started = run_program(&target, &["launch", "--verify"]).unwrap_or(false);
     }
     say("4/4 Compatibility check");
     let target = if installed.is_file() {
         installed
     } else {
-        program
+        program.clone()
     };
     run_program(&target, &["doctor"])?;
-    say("Done. To remove Status Quo later, run this file again with --uninstall.");
+    // The unpacked copy has done its work once the program sits in its own folder.
+    if target != program {
+        if let Some(dir) = program.parent() {
+            let _ = fs::remove_dir_all(dir);
+        }
+    }
+    if !started {
+        return Err(
+            "Status Quo was installed, but the panel did not start; the lines above say why."
+                .into(),
+        );
+    }
+    if o.launch {
+        say("Done. The panel is on your desktop now and opens by itself at every sign-in.");
+    } else {
+        say("Done.");
+    }
+    println!("To remove Status Quo later, run this file again with --uninstall.");
     Ok(())
 }
 

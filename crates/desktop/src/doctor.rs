@@ -92,6 +92,69 @@ pub fn check_display(s: &Session) -> Check {
     }
     check(Level::Ok, "Display", s.chosen, None)
 }
+/// The system libraries the panel loads when it starts. They are not inside the program: the
+/// graphics driver decides which OpenGL is right, so they must come from the system.
+pub const X11_LIBRARIES: &[&str] = &[
+    "libX11.so.6",
+    "libX11-xcb.so.1",
+    "libxcb.so.1",
+    "libXcursor.so.1",
+    "libXi.so.6",
+    "libXrender.so.1",
+    "libxkbcommon-x11.so.0",
+];
+pub const WAYLAND_LIBRARIES: &[&str] = &["libwayland-client.so.0", "libwayland-egl.so.1"];
+pub const SHARED_LIBRARIES: &[&str] = &["libxkbcommon.so.0", "libGL.so.1", "libEGL.so.1"];
+/// Whether the system can load a library by name, exactly as the panel will.
+#[cfg(target_os = "linux")]
+pub fn loads(name: &str) -> bool {
+    // SAFETY: these are plain C libraries of the system; loading one runs no code of ours and
+    // the handle is dropped at once.
+    unsafe { libloading::Library::new(name) }.is_ok()
+}
+#[cfg(not(target_os = "linux"))]
+pub fn loads(_name: &str) -> bool {
+    true
+}
+/// Every drawing library that cannot be loaded, in a fixed order.
+pub fn missing_libraries(loads: impl Fn(&str) -> bool) -> Vec<&'static str> {
+    SHARED_LIBRARIES
+        .iter()
+        .chain(X11_LIBRARIES)
+        .chain(WAYLAND_LIBRARIES)
+        .copied()
+        .filter(|name| !loads(name))
+        .collect()
+}
+/// Blocking only when the session in use lacks one of its own libraries: an X11 library missing
+/// on a pure Wayland session, or one of the two OpenGL entry points, does not stop the panel.
+pub fn check_libraries(missing: &[&str], s: &Session) -> Check {
+    if s.windows {
+        return check(
+            Level::Ok,
+            "Drawing libraries",
+            "part of Windows (DirectX and OpenGL)",
+            None,
+        );
+    }
+    if missing.is_empty() {
+        return check(Level::Ok, "Drawing libraries", "all present", None);
+    }
+    let lacks = |set: &[&str]| set.iter().any(|name| missing.contains(name));
+    let no_opengl = missing.contains(&"libGL.so.1") && missing.contains(&"libEGL.so.1");
+    let session_broken = if s.x_display {
+        lacks(X11_LIBRARIES)
+    } else {
+        s.wayland_display && lacks(WAYLAND_LIBRARIES)
+    };
+    let blocking = no_opengl || missing.contains(&"libxkbcommon.so.0") || session_broken;
+    check(
+        if blocking { Level::Fail } else { Level::Warn },
+        "Drawing libraries",
+        format!("not installed: {}", missing.join(", ")),
+        Some("Run the installer again: it installs them with your system's package manager (see the install guide for the package names)."),
+    )
+}
 pub fn check_folder(
     name: &'static str,
     what: &str,
@@ -207,6 +270,15 @@ pub fn gather() -> Vec<Check> {
         x_display: std::env::var_os("DISPLAY").is_some(),
         chosen: &selection.note,
     }));
+    checks.push(check_libraries(
+        &missing_libraries(loads),
+        &Session {
+            windows,
+            wayland_display: std::env::var_os("WAYLAND_DISPLAY").is_some(),
+            x_display: std::env::var_os("DISPLAY").is_some(),
+            chosen: "",
+        },
+    ));
     let state = sq_collector::state_root();
     checks.push(check_writable(&state));
     let sources = std::fs::read_to_string(state.join("config.json"))
@@ -316,6 +388,49 @@ mod tests {
         assert!(text.contains("1 problem(s) above must be fixed"));
         assert_eq!(exit_code(&[ok.clone(), fail]), 1);
         assert!(render(&[ok]).contains("Everything is ready."));
+    }
+
+    // REQ SQ-47
+    #[test]
+    fn missing_drawing_libraries_block_only_the_session_that_needs_them() {
+        let session = |wayland_display, x_display| Session {
+            windows: false,
+            wayland_display,
+            x_display,
+            chosen: "",
+        };
+        // The list is exactly what cannot be loaded, in a fixed order.
+        let missing = missing_libraries(|name| name != "libXi.so.6" && name != "libGL.so.1");
+        assert_eq!(missing, ["libGL.so.1", "libXi.so.6"]);
+        assert!(missing_libraries(|_| true).is_empty());
+        assert_eq!(missing_libraries(|_| false).len(), 12);
+        assert_eq!(check_libraries(&[], &session(false, true)).level, Level::Ok);
+        // An X11 library missing: blocking on X11, a warning on a pure Wayland session.
+        let x = check_libraries(&["libXi.so.6"], &session(false, true));
+        assert_eq!(x.level, Level::Fail);
+        assert!(x.detail.contains("libXi.so.6") && x.fix.is_some());
+        assert_eq!(
+            check_libraries(&["libXi.so.6"], &session(true, false)).level,
+            Level::Warn
+        );
+        assert_eq!(
+            check_libraries(&["libwayland-egl.so.1"], &session(true, false)).level,
+            Level::Fail
+        );
+        // One OpenGL entry point is enough; none is blocking everywhere.
+        assert_eq!(
+            check_libraries(&["libEGL.so.1"], &session(false, true)).level,
+            Level::Warn
+        );
+        assert_eq!(
+            check_libraries(&["libGL.so.1", "libEGL.so.1"], &session(false, false)).level,
+            Level::Fail
+        );
+        let windows = Session {
+            windows: true,
+            ..session(false, false)
+        };
+        assert_eq!(check_libraries(&["libGL.so.1"], &windows).level, Level::Ok);
     }
 
     // REQ SQ-41

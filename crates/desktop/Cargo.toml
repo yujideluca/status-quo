@@ -30,6 +30,9 @@ smithay-client-toolkit = { version = "0.19.2", default-features = false, feature
 wgpu = { version = "24", default-features = false, features = ["wgsl"] }
 egui-wgpu = { version = "0.31.1", default-features = false }
 pollster = "0.4"
+# Already part of the build (the window libraries load X11, Wayland and OpenGL with it); used
+# directly by `doctor` to ask whether those system libraries are present.
+libloading = "0.8"
 
 # Windows: OpenGL first, DirectX through wgpu when the machine has no OpenGL 2 (virtual machines,
 # remote sessions, old drivers).

@@ -502,52 +502,169 @@ pub fn install(adopt: bool) -> Result<(), String> {
     let home = home()?;
     let current = std::env::current_exe().map_err(|e| e.to_string())?;
     install_at(&home, &current, adopt, &mut systemctl)?;
+    // An upgrade: a panel that is running the previous version restarts with the new one.
+    let _ = systemctl(&["try-restart", UNITS[0], UNITS[1]]);
     println!("Installed Status Quo to {}. Existing hooks retained. Login startup follows the app configuration.",under(&home, managed()[0]).display());
     Ok(())
 }
-/// Service control. On Linux this is `systemctl --user`; Windows has no services here, so its
-/// version stops and starts the processes itself.
-#[cfg(windows)]
-pub fn systemctl(args: &[&str]) -> Result<(), String> {
-    match args.first().copied() {
-        Some("stop-all") => {
-            // Every other Status Quo process (collector and panel), never this one.
-            let _ = Command::new("taskkill")
-                .args([
-                    "/F",
-                    "/FI",
-                    &format!("PID ne {}", std::process::id()),
-                    "/IM",
-                    "status-quo.exe",
-                ])
+const UNITS: [&str; 2] = ["status-quo-collector.service", "status-quo-panel.service"];
+/// How long `launch --verify` watches the freshly started panel before calling it running.
+const VERIFY: std::time::Duration = std::time::Duration::from_secs(8);
+
+/// Whether this user has a systemd manager to talk to. Many systems have none (Void, Alpine,
+/// Devuan, MX Linux, containers, Windows): the panel then runs as an ordinary background process
+/// and starts at login from the desktop's autostart entry.
+fn systemd_user() -> bool {
+    static ANSWER: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ANSWER.get_or_init(|| {
+        cfg!(not(windows))
+            && std::env::var_os("STATUS_QUO_NO_SYSTEMD").is_none()
+            && Command::new("systemctl")
+                .args(["--user", "show-environment"])
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
-                .status();
-            Ok(())
-        }
-        Some("start") => start_detached(&[]),
-        _ => Ok(()),
+                .status()
+                .is_ok_and(|s| s.success())
+    })
+}
+/// What a service request means on a system without systemd: the panel and its collector are
+/// plain processes of this user. Returns the started panel, when one was started.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Plain {
+    Nothing,
+    Stop,
+    Start,
+    StopThenStart,
+}
+pub fn plain_action(args: &[&str], running: bool) -> Plain {
+    match args.first().copied() {
+        Some("start") => Plain::Start,
+        Some("restart") => Plain::StopThenStart,
+        Some("try-restart") if running => Plain::StopThenStart,
+        Some("stop") | Some("stop-all") => Plain::Stop,
+        _ => Plain::Nothing,
     }
 }
-/// Start the panel as a background process without a console window (Windows only).
-#[cfg(windows)]
-fn start_detached(args: &[&str]) -> Result<(), String> {
-    use std::os::windows::process::CommandExt;
-    const DETACHED_PROCESS: u32 = 0x0000_0008;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    Command::new(std::env::current_exe().map_err(|e| e.to_string())?)
-        .args(args)
-        .creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)
+/// Every other Status Quo process of this user (panel, collector), never this one.
+#[cfg(not(windows))]
+fn other_processes() -> Vec<u32> {
+    let mut programs: Vec<PathBuf> = std::env::current_exe().ok().into_iter().collect();
+    if let Ok(home) = home() {
+        programs.push(under(&home, MANAGED[0]));
+    }
+    let Ok(entries) = fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|e| e.file_name().to_str()?.parse::<u32>().ok())
+        .filter(|pid| *pid != std::process::id())
+        .filter(|pid| {
+            fs::read_link(format!("/proc/{pid}/exe")).is_ok_and(|exe| {
+                // A replaced program reads "<path> (deleted)".
+                let exe = exe.to_string_lossy().replace(" (deleted)", "");
+                programs.iter().any(|p| p.to_string_lossy() == exe)
+            })
+        })
+        .collect()
+}
+#[cfg(not(windows))]
+fn stop_others() {
+    let pids = other_processes();
+    if pids.is_empty() {
+        return;
+    }
+    let _ = Command::new("kill")
+        .args(pids.iter().map(u32::to_string))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
+        .status();
+    for _ in 0..30 {
+        if other_processes().is_empty() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+#[cfg(windows)]
+fn other_processes() -> Vec<u32> {
+    Vec::new()
+}
+#[cfg(windows)]
+fn stop_others() {
+    let _ = Command::new("taskkill")
+        .args([
+            "/F",
+            "/FI",
+            &format!("PID ne {}", std::process::id()),
+            "/IM",
+            "status-quo.exe",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+/// Where the background panel writes what it would print (the reason, when it cannot start).
+fn panel_log() -> PathBuf {
+    sq_collector::state_root().join("panel.log")
+}
+/// Start the panel as a background process of this user, detached from this terminal and
+/// without a console window. The installed program is used when there is one.
+fn start_detached() -> Result<std::process::Child, String> {
+    let installed = home().map(|h| under(&h, managed()[0]));
+    let program = match installed {
+        Ok(path) if path.is_file() => path,
+        _ => std::env::current_exe().map_err(|e| e.to_string())?,
+    };
+    let log_path = panel_log();
+    if let Some(dir) = log_path.parent() {
+        let _ = fs::create_dir_all(dir);
+    }
+    let log = File::create(&log_path)
+        .map(Stdio::from)
+        .unwrap_or_else(|_| Stdio::null());
+    let mut command = Command::new(program);
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut command, 0);
+    #[cfg(windows)]
+    std::os::windows::process::CommandExt::creation_flags(
+        &mut command,
+        0x0000_0008 | 0x0800_0000, // detached, no console window
+    );
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(log)
         .spawn()
-        .map(|_| ())
         .map_err(|e| format!("Start Status Quo: {e}"))
 }
-#[cfg(not(windows))]
+fn plain_control(args: &[&str]) -> Result<Option<std::process::Child>, String> {
+    match plain_action(args, !other_processes().is_empty()) {
+        Plain::Nothing => Ok(None),
+        Plain::Stop => {
+            stop_others();
+            Ok(None)
+        }
+        Plain::Start => start_detached().map(Some),
+        Plain::StopThenStart => {
+            stop_others();
+            start_detached().map(Some)
+        }
+    }
+}
+/// Service control: `systemctl --user` where this user has systemd, plain processes elsewhere
+/// (Windows, and Linux systems without systemd).
 pub fn systemctl(args: &[&str]) -> Result<(), String> {
+    if !systemd_user() {
+        // Linux replaces a running program file safely; only Windows must stop it first.
+        if cfg!(not(windows)) && args.first() == Some(&"stop-all") {
+            return Ok(());
+        }
+        return plain_control(args).map(|_| ());
+    }
     if args.first() == Some(&"stop-all") {
         return Ok(());
     }
@@ -564,7 +681,80 @@ pub fn systemctl(args: &[&str]) -> Result<(), String> {
         Err(format!("User service operation failed: {}", args.join(" ")))
     }
 }
-pub fn launch(login: bool) -> Result<(), String> {
+/// The last lines of a text, for an error message.
+pub fn tail(text: &str, lines: usize) -> String {
+    let all: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    all[all.len().saturating_sub(lines)..].join("\n")
+}
+/// Close the running panel and its collector. They start again at the next login.
+pub fn stop() -> Result<(), String> {
+    systemctl(&["stop", UNITS[0], UNITS[1]])?;
+    println!("Status Quo is stopped. Start it again with: status-quo launch");
+    Ok(())
+}
+/// Watch a freshly started panel process: it must still be running after `VERIFY`. A panel that
+/// ends at once without an error found another panel already running, which is fine.
+fn verify_child(mut child: std::process::Child) -> Result<(), String> {
+    let deadline = std::time::Instant::now() + VERIFY;
+    while std::time::Instant::now() < deadline {
+        match child.try_wait().map_err(|e| e.to_string())? {
+            Some(status) if status.success() => {
+                println!("Status Quo is already running.");
+                return Ok(());
+            }
+            Some(status) => {
+                let why = tail(&fs::read_to_string(panel_log()).unwrap_or_default(), 12);
+                return Err(format!(
+                    "the panel stopped right after starting ({status}). What it reported:\n{why}"
+                ));
+            }
+            None => std::thread::sleep(std::time::Duration::from_millis(250)),
+        }
+    }
+    println!("Status Quo is running.");
+    Ok(())
+}
+/// The same check for the systemd service: active, and not being restarted over and over.
+fn verify_units() -> Result<(), String> {
+    let ask = |args: &[&str]| {
+        Command::new("systemctl")
+            .arg("--user")
+            .args(args)
+            .stdin(Stdio::null())
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default()
+    };
+    let restarts = || ask(&["show", "-p", "NRestarts", "--value", UNITS[1]]);
+    let before = restarts();
+    std::thread::sleep(VERIFY);
+    if ask(&["is-active", UNITS[1]]) == "active" && restarts() == before {
+        println!("Status Quo is running.");
+        return Ok(());
+    }
+    let journal = Command::new("journalctl")
+        .args([
+            "--user",
+            "-u",
+            UNITS[1],
+            "-n",
+            "12",
+            "--no-pager",
+            "-o",
+            "cat",
+        ])
+        .stdin(Stdio::null())
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+    Err(format!(
+        "the panel does not stay running. What it reported:\n{}",
+        tail(&journal, 12)
+    ))
+}
+/// Start the panel (`login`: only when the saved configuration wants it at login). With
+/// `verify` the call returns only after the panel has stayed up, or says why it did not.
+pub fn launch(login: bool, verify: bool) -> Result<(), String> {
     if login {
         let path = sq_collector::state_root().join("config.json");
         if path.exists() {
@@ -574,6 +764,10 @@ pub fn launch(login: bool) -> Result<(), String> {
                 return Ok(());
             }
         }
+    }
+    if !systemd_user() {
+        let child = start_detached()?;
+        return if verify { verify_child(child) } else { Ok(()) };
     }
     let mut environment = vec!["import-environment"];
     for name in [
@@ -589,11 +783,12 @@ pub fn launch(login: bool) -> Result<(), String> {
     if environment.len() > 1 {
         systemctl(&environment)?;
     }
-    systemctl(&[
-        "start",
-        "status-quo-collector.service",
-        "status-quo-panel.service",
-    ])
+    systemctl(&["start", UNITS[0], UNITS[1]])?;
+    if verify {
+        verify_units()
+    } else {
+        Ok(())
+    }
 }
 fn uninstall_at(
     home: &Path,
@@ -667,6 +862,32 @@ pub fn uninstall() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // REQ SQ-47
+    #[test]
+    fn without_systemd_service_requests_become_plain_process_actions() {
+        assert_eq!(plain_action(&["start", "a.service"], false), Plain::Start);
+        assert_eq!(plain_action(&["restart"], true), Plain::StopThenStart);
+        // An upgrade restarts a running panel and leaves a stopped one alone.
+        assert_eq!(plain_action(&["try-restart"], true), Plain::StopThenStart);
+        assert_eq!(plain_action(&["try-restart"], false), Plain::Nothing);
+        assert_eq!(plain_action(&["stop", "a.service"], true), Plain::Stop);
+        assert_eq!(plain_action(&["stop-all"], true), Plain::Stop);
+        // systemd housekeeping means nothing without systemd, and must not fail.
+        for request in ["daemon-reload", "import-environment"] {
+            assert_eq!(plain_action(&[request], true), Plain::Nothing);
+        }
+        assert_eq!(plain_action(&[], true), Plain::Nothing);
+    }
+
+    // REQ SQ-47
+    #[test]
+    fn a_failed_start_reports_the_last_lines_the_panel_wrote() {
+        assert_eq!(tail("a\n\nb\nc\n", 2), "b\nc");
+        assert_eq!(tail("only", 5), "only");
+        assert_eq!(tail("", 3), "");
+    }
+
     struct Fixture {
         root: crate::scratch::Scratch,
         executable: PathBuf,

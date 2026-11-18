@@ -1,2 +1,12 @@
 [resolver]
 incompatible-rust-versions = "fallback"
+
+# Windows: the Microsoft C runtime is linked into the programs. A clean Windows 10 or 11 has no
+# VCRUNTIME140.dll, so a program that needs it does not start there (SQ-47; checked in CI by
+# tools/check_binary.sh).
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+[target.i686-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
