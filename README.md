@@ -6,32 +6,39 @@ Status Quo puts the numbers you keep checking (your Claude and Codex usage, your
 
 ## Install in two minutes
 
-You do not need to know GitHub, programming or anything technical. You copy **one line**, paste it, press Enter. The line downloads Status Quo, checks that the download is intact, installs everything Status Quo needs (including the system libraries it draws with, if your computer lacks them) and opens it. Status Quo itself goes **only into your user's folder**.
+You do not need to know GitHub, programming or anything technical, and you do not need to install anything first. Pick your system, do the one thing it says, and Status Quo appears on your desktop. It goes **only into your user's folder** and opens by itself every time you sign in.
 
-**Step 1. Open a terminal.** A terminal is a window where you type commands.
+### Windows 10 and 11
 
-- **Linux:** press `Ctrl` + `Alt` + `T`, or search for "Terminal" in your menu.
-- **Windows 10 or 11:** click the Start button, type `PowerShell`, press Enter.
+**The easy way: download and double-click.**
 
-**Step 2. Copy the line for your system, paste it into that window and press Enter.**
+1. Click here to download: **[status-quo-setup.exe](https://github.com/yujideluca/status-quo/releases/latest/download/status-quo-setup.exe)**
+2. Open the downloaded file (double-click it in your Downloads folder).
+3. Windows may show a blue box, "Windows protected your PC". That is normal for a new program: click **More info**, then **Run anyway**.
+4. A black window shows a few lines of text for some seconds. Then the Status Quo panel is on your desktop. Done.
 
-Linux (paste with `Ctrl` + `Shift` + `V`):
-
-```sh
-{ curl -fsSL https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.sh 2>/dev/null || wget -qO- https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.sh; } | sh
-```
-
-Windows, in PowerShell (paste with a right-click):
+**Or with one command.** Click the Start button, type `PowerShell`, press Enter. Copy the line below, paste it into that window with a right-click, press Enter. This way shows no blue box.
 
 ```powershell
 irm https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.ps1 | iex
 ```
 
-**Step 3. Wait a minute.** Lines of text scroll by; that is normal. At the end the tray appears on your desktop.
+### Linux
 
-**Did it work?** You see the panel on your desktop. To get a plain-words health report at any time, type `~/.local/bin/status-quo doctor` (Linux) or `& "$env:LOCALAPPDATA\status-quo\bin\status-quo.exe" doctor` (Windows).
+Ubuntu, Debian, Mint, Fedora, Arch, openSUSE and their relatives, all with the same line.
 
-**Prefer a download to a terminal?** Windows: download [status-quo-setup.exe](https://github.com/yujideluca/status-quo/releases/latest/download/status-quo-setup.exe) and double-click it. Windows may show a blue box, "Windows protected your PC", because the file is new and unsigned: click **More info**, then **Run anyway**. The pasted line above does not show that box.
+1. Open a terminal: press `Ctrl` + `Alt` + `T`, or search for "Terminal" in your menu.
+2. Copy the line below, paste it with `Ctrl` + `Shift` + `V`, press Enter.
+
+```sh
+{ curl -fsSL https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.sh 2>/dev/null || wget -qO- https://raw.githubusercontent.com/yujideluca/status-quo/main/tools/get.sh; } | sh
+```
+
+3. Lines of text scroll by for about a minute; that is normal. If it asks for your password, type it and press Enter: the installer is adding a system piece the panel needs. Then the panel is on your desktop. Done.
+
+### After installing
+
+**Did it work?** You see the panel on your desktop. For a health report in plain words at any time, type `~/.local/bin/status-quo doctor` (Linux) or `& "$env:LOCALAPPDATA\status-quo\bin\status-quo.exe" doctor | Out-Host` (Windows PowerShell).
 
 **What it runs on.** Windows 10 and 11 (64-bit). Linux with an Intel/AMD or ARM 64-bit processor: Ubuntu 18.04 or newer, Debian 12 or newer, Mint, Fedora, Rocky/Alma/RHEL 8 or newer, Arch, openSUSE, Void and their relatives. Nothing has to be installed beforehand: the installer brings the libraries the panel needs. Before every release, this exact line is run on a bare copy of each of those systems and the panel must come up, or the release is not published.
 
