@@ -21,6 +21,9 @@ pub struct Tray {
     pub bare: bool,
     /// The host is a frameless window the user can move by dragging the empty part of the header.
     pub window_drag: bool,
+    /// The host cannot draw a see-through window (the DirectX fallback on Windows): the
+    /// background is then drawn solid whatever the Background opacity setting says.
+    pub opaque: bool,
     /// Where the buttons of the top row were drawn in the last frame.
     header_buttons_rect: egui::Rect,
     /// A window move was already asked for during the current press.
@@ -73,6 +76,7 @@ impl Tray {
             window_drag: false,
             header_buttons_rect: egui::Rect::NOTHING,
             window_move_sent: false,
+            opaque: false,
             wallpaper: WallpaperColors::Pending,
             browser: None,
             picker: None,
@@ -106,6 +110,9 @@ impl Tray {
                 Mode::System => system_dark,
             };
             resolved.palette = Palette::from_wallpaper(seed, dark);
+        }
+        if self.opaque {
+            resolved.opacity = 1.0;
         }
         resolved
     }
@@ -843,6 +850,9 @@ impl Tray {
             .show(ui, |ui| {
                 ui.heading("Appearance");
                 theme_controls(ui, &mut draft.theme, &self.styles, &self.wallpaper);
+                if self.opaque {
+                    ui.label(RichText::new(OPAQUE_NOTE).small());
+                }
                 ui.add(egui::Slider::new(&mut draft.gap, 0.0..=40.0).text("Space between widgets"));
                 ui.separator();
                 ui.heading("Desktop behavior");
@@ -1885,6 +1895,8 @@ pub fn reset_label(reset: i64, now: i64) -> String {
     };
     format!("Resets {duration} · {}", timestamp_utc(reset))
 }
+/// Shown under the appearance settings when the host cannot draw a see-through window.
+pub const OPAQUE_NOTE: &str = "This computer draws the panel without OpenGL, so the background cannot be see-through here: Background opacity has no effect.";
 /// Text of the Customize switch that turns the tray into an ordinary window (SQ-48).
 pub const FLOATING_LABEL: &str = "Floating window (a normal window with a title bar)";
 #[cfg(test)]

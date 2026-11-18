@@ -57,7 +57,8 @@ if ($report -notmatch 'Ready to run|Everything is ready') { Fail 'the compatibil
 Write-Host "`n######## The panel sits on the desktop background; the floating window is a setting (SQ-48)"
 if ($report -notmatch 'windows-desktop') { Fail 'the compatibility check does not report the desktop placement' }
 Add-Type -AssemblyName System.Windows.Forms
-Add-Type -Namespace SqTest -Name Win -ReferencedAssemblies System.Drawing -MemberDefinition @'
+Add-Type -Namespace SqTest -Name Win -MemberDefinition @'
+[StructLayout(LayoutKind.Sequential)] public struct Spot { public int X; public int Y; }
 public delegate bool EnumProc(System.IntPtr hwnd, System.IntPtr lParam);
 [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc callback, System.IntPtr lParam);
 [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(System.IntPtr hwnd, out uint pid);
@@ -66,7 +67,7 @@ public delegate bool EnumProc(System.IntPtr hwnd, System.IntPtr lParam);
 [DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr hwnd, out Rect rect);
 [DllImport("user32.dll")] public static extern bool GetClientRect(System.IntPtr hwnd, out Rect rect);
 [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(System.IntPtr hwnd, System.Text.StringBuilder text, int max);
-[DllImport("user32.dll")] public static extern System.IntPtr WindowFromPoint(System.Drawing.Point point);
+[DllImport("user32.dll")] public static extern System.IntPtr WindowFromPoint(Spot point);
 [DllImport("user32.dll")] public static extern System.IntPtr GetAncestor(System.IntPtr hwnd, uint flags);
 [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
 [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, System.UIntPtr extra);
@@ -153,7 +154,9 @@ function BehindOtherWindows($label) {
             [void][SqTest.Win]::SetForegroundWindow($panel)
             foreach ($tick in 1..10) { [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 150 }
             if (-not [SqTest.Win]::InFrontOf($other.Handle, $panel)) { Fail "$label`: after a click on the panel it is in front of another window (click $round)" }
-            $point = New-Object Drawing.Point ([int]($place.Left + $width / 4)), ([int]($place.Top + $height / 2))
+            $point = New-Object SqTest.Win+Spot
+            $point.X = [int]($place.Left + $width / 4)
+            $point.Y = [int]($place.Top + $height / 2)
             $seen = [SqTest.Win]::GetAncestor([SqTest.Win]::WindowFromPoint($point), 2)
             if ($seen -ne $other.Handle) { Fail "$label`: where the two windows overlap, the screen does not show the other window (click $round)" }
         }

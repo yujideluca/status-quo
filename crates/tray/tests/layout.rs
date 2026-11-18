@@ -1281,3 +1281,36 @@ fn the_drag_area_of_a_frameless_panel_leaves_the_header_buttons_clickable() {
         }
     }
 }
+// REQ SQ-48: where the host cannot draw a see-through window (the DirectX fallback on Windows),
+// the background is solid whatever the opacity setting says, and Customize says so.
+#[test]
+fn a_host_without_transparency_draws_a_solid_background_and_says_so() {
+    let mut config = Config::default();
+    config.theme.opacity = 0.2;
+    let mut tray = Tray::new(config.clone());
+    assert_eq!(tray.effective_theme(&config.theme, true).opacity, 0.2);
+    tray.opaque = true;
+    assert_eq!(tray.effective_theme(&config.theme, true).opacity, 1.0);
+    tray.begin_customization();
+    fn collect_text(shape: &egui::Shape, out: &mut String) {
+        match shape {
+            egui::Shape::Text(t) => out.push_str(t.galley.text()),
+            egui::Shape::Vec(v) => v.iter().for_each(|s| collect_text(s, out)),
+            _ => {}
+        }
+    }
+    let ctx = egui::Context::default();
+    let mut texts = String::new();
+    for _ in 0..2 {
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            tray.show(ctx, 0);
+        });
+        for clipped in &output.shapes {
+            collect_text(&clipped.shape, &mut texts);
+        }
+    }
+    assert!(
+        texts.contains("cannot be see-through"),
+        "Customize does not say that the background cannot be see-through"
+    );
+}

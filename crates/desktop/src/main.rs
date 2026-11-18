@@ -339,6 +339,7 @@ fn run() -> Result<(), String> {
                 app.tray.capabilities = format!("{note} {}", native::capabilities());
                 app.x11_hints_pending = desktop_hints;
                 app.tray.bare = !framed && !opaque;
+                app.tray.opaque = opaque;
                 app.tray.window_drag = !framed;
                 app.place_default = place_default;
                 app.restart_on_floating = restart_on_floating;
@@ -654,7 +655,12 @@ impl eframe::App for App {
                 }
             }
         }
+        #[cfg(not(any(target_os = "linux", windows)))]
+        let _ = frame;
+        self.tick(ctx);
         // Windows raises a window again at every click: the panel is held at the bottom.
+        // This runs after `tick`, which reads a changed Window layer setting: the hold must be
+        // lifted before the new layer is applied, or "Above" would be answered with "bottom".
         #[cfg(windows)]
         {
             use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -671,9 +677,6 @@ impl eframe::App for App {
                 }
             }
         }
-        #[cfg(not(any(target_os = "linux", windows)))]
-        let _ = frame;
-        self.tick(ctx);
     }
 }
 impl App {
