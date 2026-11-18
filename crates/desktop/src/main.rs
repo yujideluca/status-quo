@@ -529,7 +529,6 @@ struct App {
     #[cfg_attr(not(windows), allow(dead_code))]
     kept_behind: Option<bool>,
     /// Windows: the saved position was checked against the taskbar once.
-    #[cfg_attr(not(windows), allow(dead_code))]
     fitted: bool,
 }
 impl App {
@@ -751,6 +750,9 @@ impl App {
             let area = work_area_unknown();
             if let (Some(monitor), Some(outer)) = (monitor, outer) {
                 self.place_default = false;
+                // This placement already respects the taskbar: the check of a saved position
+                // below would read the old place and undo it.
+                self.fitted = true;
                 let area =
                     area.unwrap_or_else(|| egui::Rect::from_min_size(egui::Pos2::ZERO, monitor));
                 let size = egui::vec2(
