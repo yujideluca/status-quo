@@ -38,3 +38,6 @@ libloading = "0.8"
 # remote sessions, old drivers).
 [target.'cfg(windows)'.dependencies]
 eframe = { version = "0.31.1", default-features = false, features = ["default_fonts", "glow", "wgpu"] }
+# The DirectX 12 backend must be named: without it the DirectX fallback finds no graphics
+# adapter at all (v0.1.0 to v0.1.2), and a PC without a graphics driver shows no panel.
+wgpu = { version = "24", default-features = false, features = ["dx12", "wgsl"] }
