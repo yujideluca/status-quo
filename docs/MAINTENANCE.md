@@ -53,7 +53,7 @@ decision. CI runs it instead of the bare gate, so a `falha` fails the job. Repos
 
 ## 8. Windows desktop stress test (panel)
 
-`tools/stress/windows.ps1` drives the installed panel on the visible desktop of a Windows 10 or 11 test machine with real clicks, real keys and real restarts (SQ-48, SQ-49, SQ-50): every window layer with and without the Floating window setting, Show desktop (Win+D) 15 times, twelve windows over the panel, the Floating window setting switched six times, the saved place, Windows Explorer restarted three times, launch while running, stop and start, 300 fast clicks and three idle minutes with memory compared. Every check prints PASS or FAIL and the exit code is the number of failures.
+`tools/stress/windows.ps1` drives the installed panel on the visible desktop of a Windows 10 or 11 test machine with real clicks, real keys and real restarts (SQ-48, SQ-49, SQ-50): every window layer with and without the Floating window setting, Show desktop (Win+D) 15 times, a panel started while Show desktop is on, twelve windows over the panel, the Floating window setting switched six times, the saved place, Windows Explorer restarted three times, launch while running, stop and start, 300 fast clicks and three idle minutes with memory compared. Every check prints PASS or FAIL and the exit code is the number of failures.
 
 - **Where:** a test machine or virtual machine, never a desktop in use: it moves the pointer, presses Win+D, restarts Windows Explorer and rewrites the layer and Floating window settings.
 - **How:** without a console window in front of the panel, for example as a scheduled task through `conhost.exe --headless`; `-Only matrix,place` runs chosen rounds.

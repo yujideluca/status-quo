@@ -12,6 +12,10 @@
 //! 2026-11-19; Windows 11 24H2 keeps the icons where they are). So the panel's owner is always
 //! the window that holds the icons right now (`icon_host`), looked up again whenever the
 //! active window changes or a window is minimised or restored.
+//! "Behind the other windows" therefore means "directly in front of the desktop"
+//! (`stack_place`): the bottom of the stack normally, and the place right in front of the
+//! raised icon window while "Show desktop" is on, so that a window opened in that state still
+//! comes in front of the panel.
 //! The panel is not the active window either, not even after a click on it: its buttons work
 //! without that. It takes the keyboard focus only while a text field of the panel is being
 //! typed in (`keyboard`), and gives it back to the desktop afterwards. Focus that Windows hands
@@ -33,8 +37,9 @@ static TYPING: AtomicBool = AtomicBool::new(false);
 /// When the panel was last clicked, in milliseconds since Windows started (0: never).
 static CLICKED_AT: AtomicU64 = AtomicU64::new(0);
 static EXPLORER_STARTED: AtomicU32 = AtomicU32::new(0);
-/// The panel's owner is a raised icon window ("Show desktop" on Windows 10), not the bottom one.
-static RAISED: AtomicBool = AtomicBool::new(false);
+/// The raised icon window that owns the panel ("Show desktop" on Windows 10), or 0 while the
+/// owner is the bottom window.
+static RAISED: AtomicIsize = AtomicIsize::new(0);
 static PREVIOUS: AtomicIsize = AtomicIsize::new(0);
 static PANEL: AtomicIsize = AtomicIsize::new(0);
 
@@ -107,6 +112,32 @@ pub fn icon_host(progman: isize, progman_has_icons: bool, layers: &[(isize, bool
         .find(|(_, has_icons)| *has_icons)
         .map_or(progman, |(window, _)| *window)
 }
+/// Where a restacking request puts the panel while it is kept behind the other windows.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Stack {
+    /// At the very bottom: the desktop is the bottom window.
+    Bottom,
+    /// Unchanged: it already lies directly in front of the raised desktop.
+    Keep,
+    /// Directly behind this window, which is the one in front of the raised desktop (0, which
+    /// Windows reads as "in front of all", when the raised desktop is the front window).
+    Behind(isize),
+}
+
+/// The panel never leaves the place directly in front of the desktop. Normally that is the
+/// bottom. While "Show desktop" has raised the desktop (`raised`), it is the place behind
+/// `in_front_of_desktop`, the window stacked directly in front of the raised desktop (0 when
+/// there is none): a window opened in that state stays in front of the panel, whatever asked
+/// for the restacking.
+pub fn stack_place(raised: bool, panel: isize, in_front_of_desktop: isize) -> Stack {
+    if !raised {
+        Stack::Bottom
+    } else if in_front_of_desktop == panel {
+        Stack::Keep
+    } else {
+        Stack::Behind(in_front_of_desktop)
+    }
+}
 pub fn raises_on_click(behind: bool) -> bool {
     !behind
 }
@@ -140,6 +171,8 @@ pub fn keyboard_action(active: bool, wants_keyboard: bool, since_click: Option<u
 }
 
 const WM_WINDOWPOSCHANGING: u32 = 0x0046;
+/// `GetWindow`: the window stacked directly in front of the given one.
+const GW_HWNDPREV: u32 = 3;
 /// Events Windows reports to `desktop_changed`.
 const FOREGROUND: u32 = 0x0003;
 const MINIMIZE_START: u32 = 0x0016;
@@ -158,6 +191,7 @@ extern "system" {
     fn FindWindowW(class: *const u16, title: *const u16) -> isize;
     fn FindWindowExW(parent: isize, after: isize, class: *const u16, title: *const u16) -> isize;
     fn IsWindowVisible(window: isize) -> i32;
+    fn GetWindow(window: isize, which: u32) -> isize;
     fn RegisterWindowMessageW(name: *const u16) -> u32;
     fn SetForegroundWindow(window: isize) -> i32;
     fn GetShellWindow() -> isize;
@@ -241,7 +275,7 @@ unsafe fn own_by_desktop(window: isize) {
         return;
     }
     if !BEHIND.load(Ordering::Acquire) {
-        RAISED.store(false, Ordering::Release);
+        RAISED.store(0, Ordering::Release);
         if GetWindowLongPtrW(window, GWLP_HWNDPARENT) != 0 {
             SetWindowLongPtrW(window, GWLP_HWNDPARENT, 0);
         }
@@ -252,13 +286,13 @@ unsafe fn own_by_desktop(window: isize) {
         return;
     }
     let raised = desktop != FindWindowW(wide("Progman").as_ptr(), std::ptr::null());
-    RAISED.store(raised, Ordering::Release);
+    RAISED.store(if raised { desktop } else { 0 }, Ordering::Release);
     SetWindowLongPtrW(window, GWLP_HWNDPARENT, desktop);
-    // Windows sorts an owned window in front of its owner only when the stacking changes.
-    let place = if raised { HWND_TOP } else { HWND_BOTTOM };
+    // Windows sorts an owned window in front of its owner only when the stacking changes;
+    // the request is answered in `procedure` with the place directly in front of the owner.
     SetWindowPos(
         window,
-        place,
+        HWND_BOTTOM,
         0,
         0,
         0,
@@ -359,9 +393,19 @@ unsafe extern "system" fn procedure(
         // alone: restacking the panel on those made Windows forget which windows "Show
         // desktop" had put away.
         let position = &mut *(lparam as *mut WindowPos);
-        // While "Show desktop" has raised the desktop the panel stays where its owner is.
-        if position.flags & SWP_NOZORDER == 0 && !RAISED.load(Ordering::Acquire) {
-            position.insert_after = HWND_BOTTOM;
+        if position.flags & SWP_NOZORDER == 0 {
+            let desktop = RAISED.load(Ordering::Acquire);
+            // The window stacked directly in front of the raised desktop.
+            let in_front = if desktop == 0 {
+                0
+            } else {
+                GetWindow(desktop, GW_HWNDPREV)
+            };
+            match stack_place(desktop != 0, window, in_front) {
+                Stack::Bottom => position.insert_after = HWND_BOTTOM,
+                Stack::Keep => position.flags |= SWP_NOZORDER,
+                Stack::Behind(other) => position.insert_after = other,
+            }
         }
     }
     if ON_DESKTOP.load(Ordering::Acquire) {
@@ -457,7 +501,7 @@ pub fn keep_behind(window: isize, behind: bool) {
     unsafe {
         wrap(window);
         own_by_desktop(window);
-        if behind && !RAISED.load(Ordering::Acquire) {
+        if behind {
             SetWindowPos(
                 window,
                 HWND_BOTTOM,
@@ -518,6 +562,13 @@ mod tests {
         assert_eq!(icon_host(7, false, &[(8, false), (9, true)]), 9);
         assert_eq!(icon_host(7, false, &[(8, false)]), 7);
         assert_eq!(icon_host(7, false, &[]), 7);
+        // Behind the other windows means directly in front of the desktop: the bottom, or,
+        // while "Show desktop" has raised the desktop, behind the window in front of it.
+        assert_eq!(stack_place(false, 5, 0), Stack::Bottom);
+        assert_eq!(stack_place(false, 5, 9), Stack::Bottom);
+        assert_eq!(stack_place(true, 5, 5), Stack::Keep);
+        assert_eq!(stack_place(true, 5, 0), Stack::Behind(0));
+        assert_eq!(stack_place(true, 5, 9), Stack::Behind(9));
         assert!(raises_on_click(false));
         assert!(!raises_on_click(true));
         use Keyboard::*;

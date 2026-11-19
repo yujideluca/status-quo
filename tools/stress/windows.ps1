@@ -22,6 +22,7 @@ Add-Type -Namespace L -Name W -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool IsIconic(System.IntPtr h);
 [DllImport("user32.dll")] public static extern bool IsWindowVisible(System.IntPtr h);
 [DllImport("user32.dll")] public static extern System.IntPtr GetForegroundWindow();
+[DllImport("user32.dll")] public static extern bool SetForegroundWindow(System.IntPtr h);
 [DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr h, out Rect r);
 [DllImport("user32.dll")] public static extern System.IntPtr GetWindow(System.IntPtr h, uint which);
 [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] public static extern System.IntPtr GetLong(System.IntPtr h, int index);
@@ -182,6 +183,28 @@ foreach ($i in 1..3) {
   Check $res[0] "round $i show desktop twice after the restart" $res[1]
   $other.Close()
 }
+}
+
+if (Run 'leftover') {
+"######## Started while Show desktop is on, then a window is opened and the panel made the active window"
+# On Windows 10 the desktop stays raised in this state and the panel belongs to it; a window
+# opened then must still come in front of the panel (seen 2026-11-19 after a test that
+# stopped half way: the panel came in front).
+SetConfig 'behind' 'false'
+$first = Other; Pump 10
+$shell = New-Object -ComObject Shell.Application
+$shell.ToggleDesktop(); Pump 30
+$first.Close(); $first.Dispose()
+StopAll; Launch
+"started during Show desktop: $(Facts)"
+$r = Rect
+$other = Other $r.Left ($r.Top + 60) 300 300
+$other.TopMost = $true; $other.TopMost = $false; $other.Activate(); Pump 10
+foreach ($i in 1..3) { Click ($r.Right - 12) ($r.Bottom - 12); [void][L.W]::SetForegroundWindow((PanelWindow)); Pump 10 }
+Check (-not [L.W]::Above((PanelWindow), $other.Handle)) 'the panel stays behind a window opened while Show desktop is on' "owner=$(Owner)"
+$other.Close(); $other.Dispose()
+if ((Owner) -eq 'WorkerW') { $shell.ToggleDesktop(); Pump 30 }
+Check ((Owner) -eq 'Progman') 'back on the ordinary desktop afterwards' "$(Facts)"
 }
 
 if (Run 'restart') {

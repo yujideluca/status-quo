@@ -229,33 +229,24 @@ function PartOfDesktop($label) {
     $style = [SqTest.Win]::GetWindowLongPtr($panel, -16).ToInt64()
     $extended = [SqTest.Win]::GetWindowLongPtr($panel, -20).ToInt64()
     $owner = [SqTest.Win]::OwnerClass($panel)
+    # Show desktop can still be switched on from an earlier run that stopped half way; on
+    # Windows 10 the desktop icons, and with them the panel, then belong to a window of class
+    # WorkerW. It is switched off, so that the check starts from the ordinary desktop.
+    if ($owner -eq 'WorkerW') {
+        Write-Host "$label`: Show desktop was still switched on (panel owner `"WorkerW`"); switching it off first"
+        (New-Object -ComObject Shell.Application).ToggleDesktop()
+        foreach ($tick in 1..30) {
+            [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 100
+            $owner = [SqTest.Win]::OwnerClass($panel)
+            if ($owner -eq 'Progman') { break }
+        }
+    }
     $read = 'style {0:x}, extended style {1:x}, owner "{2}"' -f $style, $extended, $owner
     # 0xC00000 title bar, 0x40000 resizing edge, 0x20000 and 0x10000 minimize and maximize.
     if ($style -band 0xC70000) { Fail "$label`: the panel still has application window styles ($read)" }
     # 0x80 tool window (not in Alt+Tab, not on the taskbar), 0x40000 forces a taskbar button.
     if (-not ($extended -band 0x80) -or ($extended -band 0x40000)) { Fail "$label`: the panel would be listed in Alt+Tab ($read)" }
     if ($owner -ne 'Progman') { Fail "$label`: the panel is not owned by the desktop window ($read)" }
-    $middle = New-Object SqTest.Win+Spot
-    $middle.X = [int](($place.Left + $place.Right) / 2); $middle.Y = [int](($place.Top + $place.Bottom) / 2)
-    # A test machine can have a window of another program left open over the panel. A dialog
-    # box is not put away by Show desktop (seen 2026-11-19 on the GitHub Windows Server 2025
-    # machine: "System Properties" of SystemPropertiesPerformance), and the check below would
-    # then see that dialog instead of the panel. Such a program is closed first, and named.
-    foreach ($round in 1..5) {
-        $top = [SqTest.Win]::GetAncestor([SqTest.Win]::WindowFromPoint($middle), 2)
-        if ($top -eq $panel) { break }
-        $owner = [uint32]0; [void][SqTest.Win]::GetWindowThreadProcessId($top, [ref]$owner)
-        $program = Get-Process -Id $owner -ErrorAction SilentlyContinue
-        $title = New-Object Text.StringBuilder 256; [void][SqTest.Win]::GetWindowText($top, $title, 256)
-        $what = 'class "{0}", title "{1}", program "{2}"' -f [SqTest.Win]::ClassOf($top), $title, $program.ProcessName
-        if (-not $program -or $owner -eq $PID -or $program.ProcessName -in 'explorer', 'status-quo') {
-            Fail "$label`: before Show desktop the screen does not show the panel but a window that this test may not close ($what)"
-        }
-        Write-Host "$label`: closing a window left open over the panel by another program ($what)"
-        Stop-Process -Id $owner -Force -ErrorAction SilentlyContinue
-        Start-Sleep -Milliseconds 700
-        if ($round -eq 5) { Fail "$label`: windows of other programs still cover the panel ($what)" }
-    }
     $other = New-Object Windows.Forms.Form
     $other.Text = 'Another window'; $other.StartPosition = 'Manual'
     $other.SetBounds(40, 40, 320, 240)
@@ -272,17 +263,27 @@ function PartOfDesktop($label) {
         if (-not $gone) { Fail "$label`: Show desktop did not put the other window away, so the check cannot run" }
         foreach ($tick in 1..10) { [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 100 }
         if (-not [SqTest.Win]::IsWindowVisible($panel) -or [SqTest.Win]::IsIconic($panel)) { Fail "$label`: Show desktop hid the panel" }
-        if ([SqTest.Win]::GetAncestor([SqTest.Win]::WindowFromPoint($middle), 2) -ne $panel) {
-            # What covers the panel, and whether that is still so three seconds later.
-            $seen = { $top = [SqTest.Win]::GetAncestor([SqTest.Win]::WindowFromPoint($middle), 2)
-                $owner = [uint32]0; [void][SqTest.Win]::GetWindowThreadProcessId($top, [ref]$owner)
-                $title = New-Object Text.StringBuilder 256; [void][SqTest.Win]::GetWindowText($top, $title, 256)
-                $program = (Get-Process -Id $owner -ErrorAction SilentlyContinue).ProcessName
-                'window there: class "{0}", title "{1}", program "{2}", owner "{3}"; panel owner "{4}"; panel shown: {5}' -f [SqTest.Win]::ClassOf($top), $title, $program, [SqTest.Win]::OwnerClass($top), [SqTest.Win]::OwnerClass($panel), ($top -eq $panel) }
-            $first = & $seen
-            foreach ($tick in 1..30) { [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 100 }
-            Fail "$label`: after Show desktop the screen does not show the panel ($first; three seconds later: $(& $seen))"
-        }
+        # The panel must be what the screen shows. A test machine can have a window of another
+        # program open over part of it that Show desktop does not put away (a dialog box:
+        # "System Properties" on the GitHub Windows Server 2025 machine, 2026-11-19), so 25
+        # points spread over the panel are looked at. Such a window is named and accepted;
+        # the panel seen at no point, or the desktop itself (Windows Explorer) over it, fails.
+        $shown = 0; $covers = @{}
+        foreach ($column in 1..5) { foreach ($row in 1..5) {
+            $spot = New-Object SqTest.Win+Spot
+            $spot.X = [int]($place.Left + ($place.Right - $place.Left) * $column / 6)
+            $spot.Y = [int]($place.Top + ($place.Bottom - $place.Top) * $row / 6)
+            $top = [SqTest.Win]::GetAncestor([SqTest.Win]::WindowFromPoint($spot), 2)
+            if ($top -eq $panel) { $shown++; continue }
+            $owner = [uint32]0; [void][SqTest.Win]::GetWindowThreadProcessId($top, [ref]$owner)
+            $title = New-Object Text.StringBuilder 256; [void][SqTest.Win]::GetWindowText($top, $title, 256)
+            $program = (Get-Process -Id $owner -ErrorAction SilentlyContinue).ProcessName
+            $covers['class "{0}", title "{1}", program "{2}"' -f [SqTest.Win]::ClassOf($top), $title, $program] = $program
+        } }
+        $named = ($covers.Keys | Sort-Object) -join '; '
+        if ($covers.Values -contains 'explorer') { Fail "$label`: after Show desktop the desktop covers the panel (panel seen at $shown of 25 points; over it: $named; panel owner `"$([SqTest.Win]::OwnerClass($panel))`")" }
+        if ($shown -eq 0) { Fail "$label`: after Show desktop the screen does not show the panel at any of 25 points (over it: $named)" }
+        if ($covers.Count) { Write-Host "$label`: after Show desktop the panel is seen at $shown of 25 points; a window of another program that Show desktop leaves open covers the rest ($named)" }
         $shell.ToggleDesktop()
         $back = $false
         foreach ($tick in 1..50) {
