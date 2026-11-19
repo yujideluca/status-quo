@@ -256,7 +256,10 @@ function PartOfDesktop($label) {
         if ([SqTest.Win]::GetAncestor([SqTest.Win]::WindowFromPoint($middle), 2) -ne $panel) {
             # What covers the panel, and whether that is still so three seconds later.
             $seen = { $top = [SqTest.Win]::GetAncestor([SqTest.Win]::WindowFromPoint($middle), 2)
-                'window there: class "{0}", owner "{1}"; panel owner "{2}"; panel shown: {3}' -f [SqTest.Win]::ClassOf($top), [SqTest.Win]::OwnerClass($top), [SqTest.Win]::OwnerClass($panel), ($top -eq $panel) }
+                $owner = [uint32]0; [void][SqTest.Win]::GetWindowThreadProcessId($top, [ref]$owner)
+                $title = New-Object Text.StringBuilder 256; [void][SqTest.Win]::GetWindowText($top, $title, 256)
+                $program = (Get-Process -Id $owner -ErrorAction SilentlyContinue).ProcessName
+                'window there: class "{0}", title "{1}", program "{2}", owner "{3}"; panel owner "{4}"; panel shown: {5}' -f [SqTest.Win]::ClassOf($top), $title, $program, [SqTest.Win]::OwnerClass($top), [SqTest.Win]::OwnerClass($panel), ($top -eq $panel) }
             $first = & $seen
             foreach ($tick in 1..30) { [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 100 }
             Fail "$label`: after Show desktop the screen does not show the panel ($first; three seconds later: $(& $seen))"
