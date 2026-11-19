@@ -501,3 +501,17 @@ fn a_release_is_offered_for_updates_only_after_its_install_tests() {
     assert!(read("tools/install-test/windows-update.ps1").contains("PROVEN"));
     assert!(read("README.md").contains("Update automatically"));
 }
+
+// REQ SQ-26: every push runs the real panel on a layer-shell desktop, and the install proof
+// that main requires waits for it.
+#[test]
+fn every_push_draws_the_panel_on_a_layer_shell_desktop() {
+    let packages = read(".github/workflows/packages.yml");
+    assert!(packages.contains("tools/install-test/linux-layer-shell.sh"));
+    let proof = packages
+        .find("  install-proof:")
+        .expect("install-proof job");
+    assert!(packages[proof..].contains("linux-layer-shell"));
+    let script = read("tools/install-test/linux-layer-shell.sh");
+    assert!(script.contains("sway") && script.contains("grim") && script.contains("PROVEN"));
+}
