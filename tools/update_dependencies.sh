@@ -43,7 +43,9 @@ grep -E '^\s+Unchanged .*available' "$OUT/cargo-update.log" | sed 's/^ *//' >"$O
 
 # Shared quality check
 current=$(tr -d '[:space:]' <pipeline-check.version)
-latest=$(gh release view -R yujideluca/pipeline-check --json tagName -q .tagName)
+# Its versions are git tags (vX.Y.Z), the same tags tools/pipeline-check.sh clones.
+latest=$(git ls-remote --tags --refs https://github.com/yujideluca/pipeline-check |
+  sed 's|.*refs/tags/||' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1)
 if [ -n "$latest" ] && newer "${current#v}" "${latest#v}"; then
   printf '%s\n' "$latest" >pipeline-check.version
   note "pipeline-check $current -> $latest"

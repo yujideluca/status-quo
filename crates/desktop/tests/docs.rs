@@ -427,6 +427,13 @@ fn installation_is_proven_by_real_runs_never_by_dry_runs() {
 fn the_repository_updates_itself_only_through_the_full_ci() {
     let workflow = read(".github/workflows/update-dependencies.yml");
     let script = read("tools/update_dependencies.sh");
+    // pipeline-check publishes version tags, not GitHub releases (the first real run stopped
+    // with "release not found"): its newest version is read from the tags, as
+    // tools/pipeline-check.sh fetches it.
+    assert!(
+        script.contains("git ls-remote --tags") && !script.contains("gh release view"),
+        "tools/update_dependencies.sh must read pipeline-check's newest version from its git tags"
+    );
     for needed in [
         "schedule:",
         "tools/update_dependencies.sh",
