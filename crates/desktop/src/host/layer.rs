@@ -724,6 +724,16 @@ impl ProvidesRegistryState for State {
 mod tests {
     use super::*;
 
+    // REQ SQ-26: the layer-shell renderer has a graphics backend built in. wgpu 25 and later
+    // build Vulkan and OpenGL ES only on request; without them the panel stopped at start on
+    // every layer-shell desktop (KDE Plasma, sway, Hyprland) in 0.1.5.
+    #[test]
+    fn the_layer_shell_renderer_has_vulkan_and_opengl() {
+        let built = wgpu::Instance::enabled_backend_features();
+        assert!(built.contains(wgpu::Backends::VULKAN), "{built:?}");
+        assert!(built.contains(wgpu::Backends::GL), "{built:?}");
+    }
+
     // REQ SQ-27: mouse buttons map to egui; unknown buttons are ignored.
     #[test]
     fn pointer_buttons_map_to_egui_buttons() {
