@@ -72,6 +72,30 @@ public delegate bool EnumProc(System.IntPtr hwnd, System.IntPtr lParam);
 [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
 [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, System.UIntPtr extra);
 [DllImport("user32.dll")] public static extern bool SetForegroundWindow(System.IntPtr hwnd);
+[DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] public static extern System.IntPtr GetWindowLongPtr(System.IntPtr hwnd, int index);
+[DllImport("user32.dll")] public static extern System.IntPtr GetWindow(System.IntPtr hwnd, uint which);
+[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(System.IntPtr hwnd, System.Text.StringBuilder text, int max);
+[DllImport("user32.dll")] public static extern bool IsIconic(System.IntPtr hwnd);
+[DllImport("user32.dll")] public static extern bool PostMessageW(System.IntPtr hwnd, uint message, System.IntPtr w, System.IntPtr l);
+// The visible console window whose title contains `part` (zero when there is none).
+public static System.IntPtr ConsoleWindow(string part) {
+    var found = System.IntPtr.Zero;
+    EnumWindows((hwnd, l) => {
+        var cls = new System.Text.StringBuilder(64); GetClassName(hwnd, cls, 64);
+        var title = new System.Text.StringBuilder(512); GetWindowText(hwnd, title, 512);
+        if (IsWindowVisible(hwnd) && cls.ToString() == "ConsoleWindowClass" && title.ToString().Contains(part)) { found = hwnd; return false; }
+        return true;
+    }, System.IntPtr.Zero);
+    return found;
+}
+// The class name of the window that owns `hwnd` ("" when it has no owner).
+public static string OwnerClass(System.IntPtr hwnd) {
+    var owner = GetWindow(hwnd, 4);
+    if (owner == System.IntPtr.Zero) return "";
+    var text = new System.Text.StringBuilder(256);
+    GetClassName(owner, text, 256);
+    return text.ToString();
+}
 // The visible "Status Quo" window of one process, and where it is on the screen.
 public static System.IntPtr PanelWindow(uint wanted, out Rect place) {
     var result = System.IntPtr.Zero; var where = new Rect();
@@ -165,7 +189,8 @@ function BehindOtherWindows($label) {
     $other = New-Object Windows.Forms.Form
     $other.Text = 'Another window'; $other.StartPosition = 'Manual'
     $other.SetBounds($place.Left, $place.Top, [int]($width / 2), $height)
-    $other.Show(); $other.Activate(); [Windows.Forms.Application]::DoEvents()
+    # Raised above every ordinary window (the test's own console may lie there), then ordinary again.
+    $other.Show(); $other.TopMost = $true; $other.TopMost = $false; $other.Activate(); [Windows.Forms.Application]::DoEvents()
     Start-Sleep -Seconds 1
     try {
         foreach ($round in 1..2) {
@@ -182,8 +207,60 @@ function BehindOtherWindows($label) {
     } finally { $other.Close(); $other.Dispose() }
     Write-Host "$label`: the panel stays behind another window, also after being clicked"
 }
+# Part of the desktop, not an application window. To Windows an application window is one with
+# a title bar or a resizing edge that is listed in Alt+Tab; the panel has neither, is a "tool
+# window" (never listed) and is owned by the desktop window (class Progman). And the real
+# thing: "Show desktop" (what Win+D does) is switched on with another window open. The other
+# window must go away and the panel must stay; switched again, the other window must be back.
+function PartOfDesktop($label) {
+    $place = New-Object SqTest.Win+Rect
+    $panel = [IntPtr]::Zero
+    foreach ($process in @(Panel)) {
+        $panel = [SqTest.Win]::PanelWindow([uint32]$process.Id, [ref]$place)
+        if ($panel -ne [IntPtr]::Zero) { break }
+    }
+    if ($panel -eq [IntPtr]::Zero) { Fail "$label`: the panel window was not found" }
+    $style = [SqTest.Win]::GetWindowLongPtr($panel, -16).ToInt64()
+    $extended = [SqTest.Win]::GetWindowLongPtr($panel, -20).ToInt64()
+    $owner = [SqTest.Win]::OwnerClass($panel)
+    $read = 'style {0:x}, extended style {1:x}, owner "{2}"' -f $style, $extended, $owner
+    # 0xC00000 title bar, 0x40000 resizing edge, 0x20000 and 0x10000 minimize and maximize.
+    if ($style -band 0xC70000) { Fail "$label`: the panel still has application window styles ($read)" }
+    # 0x80 tool window (not in Alt+Tab, not on the taskbar), 0x40000 forces a taskbar button.
+    if (-not ($extended -band 0x80) -or ($extended -band 0x40000)) { Fail "$label`: the panel would be listed in Alt+Tab ($read)" }
+    if ($owner -ne 'Progman') { Fail "$label`: the panel is not owned by the desktop window ($read)" }
+    $other = New-Object Windows.Forms.Form
+    $other.Text = 'Another window'; $other.StartPosition = 'Manual'
+    $other.SetBounds(40, 40, 320, 240)
+    $other.Show(); $other.Activate()
+    foreach ($tick in 1..10) { [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 100 }
+    $shell = New-Object -ComObject Shell.Application
+    $middle = New-Object SqTest.Win+Spot
+    $middle.X = [int](($place.Left + $place.Right) / 2); $middle.Y = [int](($place.Top + $place.Bottom) / 2)
+    try {
+        $shell.ToggleDesktop()
+        $gone = $false
+        foreach ($tick in 1..50) {
+            [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 100
+            if ([SqTest.Win]::IsIconic($other.Handle)) { $gone = $true; break }
+        }
+        if (-not $gone) { Fail "$label`: Show desktop did not put the other window away, so the check cannot run" }
+        foreach ($tick in 1..10) { [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 100 }
+        if (-not [SqTest.Win]::IsWindowVisible($panel) -or [SqTest.Win]::IsIconic($panel)) { Fail "$label`: Show desktop hid the panel" }
+        if ([SqTest.Win]::GetAncestor([SqTest.Win]::WindowFromPoint($middle), 2) -ne $panel) { Fail "$label`: after Show desktop the screen does not show the panel" }
+        $shell.ToggleDesktop()
+        $back = $false
+        foreach ($tick in 1..50) {
+            [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 100
+            if (-not [SqTest.Win]::IsIconic($other.Handle)) { $back = $true; break }
+        }
+        if (-not $back) { Fail "$label`: Show desktop a second time did not bring the other window back" }
+    } finally { $other.Close(); $other.Dispose() }
+    Write-Host "$label`: part of the desktop ($read); Show desktop leaves it and a second one brings the other windows back"
+}
 InFreeArea 'default'
 BehindOtherWindows 'default'
+PartOfDesktop 'default'
 $said = & $installed floating on | Out-String
 Write-Host $said
 if (-not (WaitTitleBar $true)) { Fail 'with the Floating window setting on, the panel did not become an ordinary window' }
@@ -194,7 +271,45 @@ if (-not (WaitTitleBar $false)) { Fail 'with the Floating window setting off, th
 Write-Host 'Floating window off: back on the desktop background'
 InFreeArea 'after Floating window off'
 BehindOtherWindows 'after Floating window off'
+PartOfDesktop 'after Floating window off'
 if ((Panel).Count -eq 0) { Fail 'the panel is not running after switching the setting' }
+
+Write-Host "`n######## The panel outlives the terminal that started it (SQ-49)"
+# Windows ends every program attached to a console when that console's window is closed. The
+# panel is started here from a real console window, then that window is closed the way its X
+# button does it: the console and its command must be gone and the panel must still run.
+& $installed stop | Out-Null
+Start-Sleep -Seconds 2
+if ((Panel).Count -ne 0) { Fail 'the panel did not stop' }
+$console = Start-Process conhost.exe -ArgumentList "cmd /c `"title sq-console-test & `"$installed`" launch --verify & ping -n 600 127.0.0.1 >nul`"" -PassThru
+# The ping starts when `launch --verify` has returned: from then on only the panel and its
+# collector carry the program's name.
+$waiting = $null
+foreach ($tick in 1..80) {
+    $waiting = Get-CimInstance Win32_Process -Filter "Name = 'PING.EXE'" | Where-Object { $_.CommandLine -match '-n 600' }
+    if ($waiting) { break }
+    Start-Sleep -Milliseconds 500
+}
+if (-not $waiting) { Fail 'launch --verify did not return in the console' }
+$before = @(Panel | ForEach-Object { $_.Id })
+if ($before.Count -eq 0) { Fail 'the panel did not start from a console' }
+# The console window is found by the title set above (Windows reports it under the process
+# running in it, not under the console host) and gets the message its X button sends (0x10).
+$window = [IntPtr]::Zero
+foreach ($tick in 1..20) {
+    $window = [SqTest.Win]::ConsoleWindow('sq-console-test')
+    if ($window -ne [IntPtr]::Zero) { break }
+    Start-Sleep -Milliseconds 250
+}
+if ($window -eq [IntPtr]::Zero) { Fail 'the console window was not found' }
+[void][SqTest.Win]::PostMessageW($window, 0x10, [IntPtr]::Zero, [IntPtr]::Zero)
+foreach ($tick in 1..40) { if ($console.HasExited) { break }; Start-Sleep -Milliseconds 500 }
+if (-not $console.HasExited) { Fail 'the console did not close' }
+Start-Sleep -Seconds 3
+if (Get-CimInstance Win32_Process -Filter "Name = 'PING.EXE'" | Where-Object { $_.CommandLine -match '-n 600' }) { Fail 'closing the console did not end the command running in it: the test proves nothing' }
+$after = @(Panel | ForEach-Object { $_.Id })
+foreach ($id in $before) { if ($after -notcontains $id) { Fail "closing the terminal that started the panel ended it (process $id)" } }
+Write-Host "the console window is closed, its command is gone, the panel still runs: $($after -join ', ')"
 
 Write-Host "`n######## Uninstall, with the line of the README"
 $readme = Join-Path $PSScriptRoot '..\..\README.md'

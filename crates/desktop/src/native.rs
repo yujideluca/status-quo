@@ -26,6 +26,15 @@ pub fn level_for(layer: Layer, floating: bool) -> egui::WindowLevel {
         _ => level(layer),
     }
 }
+/// What is saved as the window's place: position and size as `[x, y, width, height]`. The
+/// position is the one of the whole window (title bar and border included), because that is
+/// what the saved position sets at the next start; the size is the one of the content. Saving
+/// the content's position made a window with a title bar move down and right at every start.
+/// Without a known window position (Wayland) the content's is used.
+pub fn saved_place(outer: Option<egui::Rect>, inner: egui::Rect) -> [f32; 4] {
+    let position = outer.map_or(inner.min, |outer| outer.min);
+    [position.x, position.y, inner.width(), inner.height()]
+}
 /// Where a window must go to lie completely inside the free part of the screen (the screen
 /// without the taskbar). `None`: it already does.
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -307,6 +316,27 @@ impl sq_tray::FolderBrowser for Folders {
     }
 }
 
+/// Whether the command `first` (the first word after `status-quo`) prints to the terminal
+/// that started it. The panel itself and the background collector do not: on Windows a program
+/// attached to a terminal is ended when that terminal window is closed, and the panel must
+/// stay (seen 2026-11-18: closing the PowerShell that had installed Status Quo closed it).
+#[cfg(any(windows, test))]
+pub fn speaks_to_terminal(first: Option<&str>) -> bool {
+    matches!(
+        first,
+        Some(
+            "doctor"
+                | "install"
+                | "uninstall"
+                | "launch"
+                | "stop"
+                | "inspect"
+                | "floating"
+                | "help"
+                | "--help"
+        )
+    )
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,6 +344,45 @@ mod tests {
         Monitor {
             name: format!("display-{x}"),
             rect: egui::Rect::from_min_size(egui::pos2(x, 0.0), egui::vec2(width, 1080.0)),
+        }
+    }
+    // REQ SQ-50: a window with a title bar starts where it was left. Its content begins below
+    // the title bar; the saved position is the window's, so the next start does not add the
+    // title bar again.
+    #[test]
+    fn the_saved_place_is_the_window_position_and_the_content_size() {
+        let inner = egui::Rect::from_min_size(egui::pos2(512.0, 47.0), egui::vec2(760.0, 720.0));
+        let outer = egui::Rect::from_min_size(egui::pos2(504.0, 16.0), egui::vec2(776.0, 759.0));
+        assert_eq!(saved_place(Some(outer), inner), [504.0, 16.0, 760.0, 720.0]);
+        assert_eq!(saved_place(Some(inner), inner), [512.0, 47.0, 760.0, 720.0]);
+        assert_eq!(saved_place(None, inner), [512.0, 47.0, 760.0, 720.0]);
+    }
+    // REQ SQ-49: the panel and the collector never tie themselves to the terminal that started
+    // them; the commands that answer in the terminal do.
+    #[test]
+    fn only_answering_commands_use_the_terminal() {
+        for quiet in [
+            None,
+            Some("--customize"),
+            Some("--screenshot"),
+            Some("collect"),
+            Some("login"),
+            Some("hook"),
+        ] {
+            assert!(!speaks_to_terminal(quiet), "{quiet:?}");
+        }
+        for answering in [
+            "doctor",
+            "install",
+            "uninstall",
+            "launch",
+            "stop",
+            "inspect",
+            "floating",
+            "help",
+            "--help",
+        ] {
+            assert!(speaks_to_terminal(Some(answering)), "{answering}");
         }
     }
     // REQ SQ-48

@@ -108,7 +108,7 @@ pub fn select(forced: Option<Backend>, probe: &Probe, floating: bool) -> Selecti
     } else if probe.windows {
         (
             Backend::WindowsDesktop,
-            "Windows: frameless window kept below others, without a taskbar button.",
+            "Windows: frameless panel on the desktop, below other windows, not in the taskbar or Alt+Tab.",
         )
     } else {
         (
@@ -236,7 +236,7 @@ mod tests {
         let windows = probe(false, false, false, true);
         let chosen = select(None, &windows, false);
         assert_eq!(chosen.backend, Backend::WindowsDesktop);
-        assert!(chosen.note.contains("without a taskbar button"));
+        assert!(chosen.note.contains("not in the taskbar or Alt+Tab"));
         let nothing = select(None, &Probe::default(), false);
         assert_eq!(nothing.backend, Backend::Window);
         assert!(nothing

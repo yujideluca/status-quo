@@ -42,7 +42,9 @@ fn attach_console() {
 }
 fn main() {
     #[cfg(windows)]
-    attach_console();
+    if native::speaks_to_terminal(std::env::args().nth(1).as_deref()) {
+        attach_console();
+    }
     if let Err(error) = run() {
         eprintln!("Status Quo: {error}");
         std::process::exit(1);
@@ -675,9 +677,19 @@ impl eframe::App for App {
                 if let Some(RawWindowHandle::Win32(handle)) =
                     frame.window_handle().ok().map(|h| h.as_raw())
                 {
+                    if self.kept_behind.is_none() && !self.floating {
+                        host::windows::attach_to_desktop(handle.hwnd.get());
+                    }
                     host::windows::keep_behind(handle.hwnd.get(), behind);
                     self.kept_behind = Some(behind);
                 }
+            }
+            if host::windows::keyboard(ctx.wants_keyboard_input()) {
+                ctx.memory_mut(|memory| {
+                    if let Some(field) = memory.focused() {
+                        memory.surrender_focus(field);
+                    }
+                });
             }
         }
     }
@@ -825,7 +837,7 @@ impl App {
         if self.last_geometry.elapsed() >= Duration::from_secs(2) {
             native::recover_geometry(ctx);
             self.last_geometry = Instant::now();
-            let rect = ctx.input(|i| i.viewport().inner_rect);
+            let (rect, outer) = ctx.input(|i| (i.viewport().inner_rect, i.viewport().outer_rect));
             if rect != self.last_rect {
                 self.last_rect = rect;
                 self.geometry_changed = Instant::now();
@@ -837,11 +849,12 @@ impl App {
                     let monitor = native::monitor_for(rect, &monitors)
                         .map(|m| m.name.clone())
                         .unwrap_or_default();
+                    let [x, y, width, height] = native::saved_place(outer, rect);
                     let value = Geometry {
-                        x: rect.min.x,
-                        y: rect.min.y,
-                        width: rect.width(),
-                        height: rect.height(),
+                        x,
+                        y,
+                        width,
+                        height,
                         monitor,
                     };
                     if self.tray.config.geometry.get("tray") != Some(&value) {

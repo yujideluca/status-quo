@@ -33,6 +33,66 @@ pub fn locate() -> Result<PathBuf, String> {
     )
 }
 
+/// What covers the desktop: a picture file or, on Windows without a picture, one colour.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Desktop {
+    Picture(PathBuf),
+    Colour([u8; 3]),
+}
+
+/// The picture or the plain colour of this desktop, or why neither can be found.
+pub fn desktop() -> Result<Desktop, String> {
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .ok_or("no home folder")?;
+    desktop_with(
+        &Probe {
+            home: &home,
+            var: &|name| std::env::var(name).ok().filter(|v| !v.is_empty()),
+            run: &run_command,
+        },
+        cfg!(windows),
+    )
+}
+
+pub fn desktop_with(probe: &Probe, windows: bool) -> Result<Desktop, String> {
+    if windows && (probe.var)("STATUS_QUO_WALLPAPER").is_none() {
+        // Windows with "Solid colour" as background: the picture setting is there and empty.
+        // The picture file Windows stored before is still on disk and must not be used.
+        let no_picture = (probe.run)(
+            "reg",
+            &["query", r"HKCU\Control Panel\Desktop", "/v", "WallPaper"],
+        )
+        .is_some_and(|out| out.contains("WallPaper") && parse_reg_wallpaper(&out).is_none());
+        if no_picture {
+            let colour = (probe.run)(
+                "reg",
+                &["query", r"HKCU\Control Panel\Colors", "/v", "Background"],
+            )
+            .and_then(|out| parse_reg_background(&out));
+            if let Some(colour) = colour {
+                return Ok(Desktop::Colour(colour));
+            }
+        }
+    }
+    locate_with(probe, windows).map(Desktop::Picture)
+}
+
+/// The colour in the answer of `reg query "HKCU\Control Panel\Colors" /v Background`: three
+/// numbers from 0 to 255, red green blue.
+pub fn parse_reg_background(output: &str) -> Option<[u8; 3]> {
+    output.lines().find_map(|line| {
+        let rest = line.trim().strip_prefix("Background")?.trim_start();
+        let parts: Vec<u8> = rest
+            .strip_prefix("REG_SZ")?
+            .split_whitespace()
+            .map(|n| n.parse::<u8>().ok())
+            .collect::<Option<_>>()?;
+        <[u8; 3]>::try_from(parts).ok()
+    })
+}
+
 pub fn locate_with(probe: &Probe, windows: bool) -> Result<PathBuf, String> {
     if let Some(file) = (probe.var)("STATUS_QUO_WALLPAPER") {
         return resolve_image(Path::new(&file))
@@ -380,10 +440,12 @@ pub fn load_seed(path: &Path) -> Result<WallpaperSeed, String> {
     limits.max_image_height = Some(30_000);
     limits.max_alloc = Some(768 * 1024 * 1024);
     reader.limits(limits);
-    let image = reader.decode().map_err(|e| {
-        let kind = path.extension().and_then(|e| e.to_str()).unwrap_or("this");
-        format!("the {kind} picture cannot be read here: {e}")
-    })?;
+    let image = reader
+        .decode()
+        .map_err(|e| match path.extension().and_then(|e| e.to_str()) {
+            Some(kind) => format!("the {kind} picture cannot be read here: {e}"),
+            None => format!("the picture cannot be read here: {e}"),
+        })?;
     let small = image.thumbnail(64, 64).to_rgb8();
     let pixels: Vec<[u8; 3]> = small.pixels().map(|p| p.0).collect();
     seed_from_pixels(&pixels).ok_or_else(|| "the picture has no pixels".to_string())

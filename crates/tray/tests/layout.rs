@@ -32,6 +32,30 @@ fn customization_cancel_and_invalid_import_preserve_active_configuration() {
     assert_eq!(tray.config, original);
 }
 
+// REQ SQ-3: buttons, fields and tick boxes are drawn for the background actually used, not
+// for the mode: a dark background in Light mode (custom colours, or wallpaper colours that
+// could not be read) must not get white controls with light text on them.
+#[test]
+fn controls_follow_the_background_that_is_drawn() {
+    let dark_background = Theme {
+        mode: Mode::Light,
+        ..Theme::default()
+    };
+    assert!(sq_tray::terminal(&dark_background, false).dark_mode);
+    let light_background = Theme {
+        mode: Mode::Dark,
+        palette: sq_core::Palette::light(),
+        ..Theme::default()
+    };
+    assert!(!sq_tray::terminal(&light_background, true).dark_mode);
+    let system = Theme {
+        mode: Mode::System,
+        ..Theme::default()
+    };
+    assert!(sq_tray::terminal(&system, true).dark_mode);
+    assert!(!sq_tray::terminal(&system, false).dark_mode);
+}
+
 // REQ SQ-3
 #[test]
 fn system_theme_resolves_defaults_and_preserves_custom_colors() {

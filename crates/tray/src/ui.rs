@@ -1524,11 +1524,11 @@ fn apply_typography(style: &mut egui::Style, theme: &Theme) {
 pub fn terminal(theme: &Theme, system_dark: bool) -> egui::Visuals {
     let resolved = resolved_theme(theme, system_dark);
     let theme = &resolved;
-    let dark = match theme.mode {
-        Mode::Dark => true,
-        Mode::Light => false,
-        Mode::System => system_dark,
-    };
+    // Buttons, fields and tick boxes are drawn for the background actually used, not for the
+    // mode: custom colours, or a wallpaper that cannot be read, can leave a dark background in
+    // Light mode, and light controls would hide their own labels there.
+    let fill = theme.palette.background;
+    let dark = sq_core::contrast(fill, [0, 0, 0]) < sq_core::contrast(fill, [255; 3]);
     let mut visuals = if dark {
         egui::Visuals::dark()
     } else {

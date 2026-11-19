@@ -152,7 +152,7 @@ Status Quo asks the session what it can do and picks the best host. By default t
 |---|---|---|
 | The compositor offers the *layer-shell* protocol (KDE Plasma, Hyprland, sway) | layer-shell | frameless, on the desktop layer, below windows by default, anchored to a corner |
 | An X11 session, or Wayland without layer-shell such as GNOME (through XWayland) | X11 hints | a frameless window kept below others, off the taskbar |
-| Windows 10 and 11 | Windows desktop | a frameless window kept below others, without a taskbar button |
+| Windows 10 and 11 | Windows desktop | a frameless panel that belongs to the desktop: below other windows, not in the taskbar or Alt+Tab, still there after Show desktop (Win+D) |
 | The Floating window setting is on, or nothing above is possible | window | an ordinary window |
 
 Verified here: KDE Plasma on Wayland. The X11 and window hosts and the other layer-shell compositors follow the design and the protocol but were not run on real machines for this guide. Two variables override the choice when it can work:
@@ -176,7 +176,7 @@ cargo build --release --locked -p status-quo
 target\release\status-quo.exe install
 ```
 
-What is different on Windows: the tray is a frameless window kept below your other windows, with no taskbar button (it stays behind also when you click it, and ends above the taskbar; drag the empty part of its top row to move it; the *Window layer* setting can put it above others; the *Show desktop* shortcut Win+D hides it like any window until you click a window again); the collector and panel talk through a private port on your own machine protected by a random token; CPU and memory come from Windows, every graphics card of any maker from the Windows performance counters (the ones Task Manager uses); the CPU temperature is **unavailable** because Windows offers none without a driver. No administrator rights are used.
+What is different on Windows: the tray is a frameless window that belongs to the desktop: kept below your other windows, with no taskbar button and not in the Alt+Tab list (it stays behind also when you click it, ends above the taskbar and stays in place when you press the *Show desktop* shortcut Win+D; drag the empty part of its top row to move it; the *Window layer* setting can put it above others; it keeps running when you close the terminal that started it); the collector and panel talk through a private port on your own machine protected by a random token; CPU and memory come from Windows, every graphics card of any maker from the Windows performance counters (the ones Task Manager uses); the CPU temperature is **unavailable** because Windows offers none without a driver. No administrator rights are used.
 
 ## What `install` does
 

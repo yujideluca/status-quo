@@ -124,7 +124,7 @@ Options of the source installer: `--check-only` (only look), `--dry-run`, `--uni
 | Linux, KDE Plasma, Hyprland or sway | [Linux guide](docs/guide/install.md#linux-step-by-step) | on the desktop layer, behind your windows |
 | Linux, an X11 session (any desktop) | [Linux guide](docs/guide/install.md#linux-step-by-step) | a frameless window kept below others |
 | Linux, GNOME on Wayland | [Linux guide](docs/guide/install.md#linux-step-by-step) | a frameless window kept below others |
-| Windows 10 or 11 | [Windows guide](docs/guide/install.md#windows-step-by-step) | a frameless window kept below others, no taskbar button |
+| Windows 10 or 11 | [Windows guide](docs/guide/install.md#windows-step-by-step) | part of the desktop: frameless, below your windows, not in the taskbar or Alt+Tab, still there after Show desktop |
 | Just curious | [Browser demo](docs/browser-demo.md) | a web page with invented data |
 
 The short version for Linux by hand:

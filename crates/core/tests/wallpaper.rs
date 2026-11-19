@@ -111,3 +111,33 @@ fn follow_wallpaper_is_off_by_default_round_trips_and_old_files_still_load() {
     config.widgets[0].theme = Some(theme);
     config.validate().unwrap();
 }
+
+// REQ SQ-37: a wallpaper in the hue of the warning or error colour (red, orange, yellow) must
+// not give an accent that looks like them: the accent is then paler, at any hue the three
+// colours differ visibly.
+#[test]
+fn the_accent_never_looks_like_the_warning_or_error_colour() {
+    let apart = |a: [u8; 3], b: [u8; 3]| -> i32 {
+        (0..3)
+            .map(|i| (i32::from(a[i]) - i32::from(b[i])).abs())
+            .sum()
+    };
+    for hue in (0..360).step_by(3) {
+        for chroma in [0.3, 0.7, 1.0] {
+            for dark in [true, false] {
+                let seed = WallpaperSeed {
+                    hue: hue as f32,
+                    chroma,
+                };
+                let p = Palette::from_wallpaper(&seed, dark);
+                for (name, status) in [("warning", p.warning), ("error", p.error)] {
+                    assert!(
+                        apart(p.accent, status) >= 70,
+                        "hue {hue} chroma {chroma} dark {dark}: accent {:?} is too close to {name} {status:?}",
+                        p.accent
+                    );
+                }
+            }
+        }
+    }
+}

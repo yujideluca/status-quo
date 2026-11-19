@@ -21,9 +21,9 @@ Back to the [tour](../../README.md). Everything here is in **Customize**; nothin
 | LXQt, LXDE | their settings files |
 | nitrogen, feh | `bg-saved.cfg`, `~/.fehbg` |
 | Hyprland | `hyprpaper.conf` |
-| Windows 10 and 11 | the registry value `WallPaper`, then `TranscodedWallpaper` |
+| Windows 10 and 11 | the registry value `WallPaper`; when it is empty (background set to *Solid colour*) the colour in the registry value `Background`; then `TranscodedWallpaper` |
 
-Readable formats: PNG, JPEG, BMP and WebP. Not supported: JPEG XL and AVIF pictures, KDE slideshows and solid-colour backgrounds. It looks again every 30 seconds, but only while some theme follows the wallpaper, and decodes the picture only when its file changed. Verified on KDE Plasma; the others are tested with fixtures, not on real desktops, and Windows is tested with fixtures on Linux.
+Readable formats: PNG, JPEG, BMP and WebP. Not supported: JPEG XL and AVIF pictures, KDE slideshows and, on Linux, solid-colour backgrounds. It looks again every 30 seconds, but only while some theme follows the wallpaper, and decodes the picture only when its file changed. Verified on KDE Plasma; the others are tested with fixtures, not on real desktops, and Windows is tested with fixtures on Linux.
 
 ## Layout
 

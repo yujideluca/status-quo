@@ -32,8 +32,8 @@ pub fn spawn(
                 continue;
             }
             checked = Some(Instant::now());
-            let colors = match sq_sources::locate() {
-                Ok(path) => {
+            let colors = match sq_sources::desktop() {
+                Ok(sq_sources::Desktop::Picture(path)) => {
                     let signature = (
                         path.clone(),
                         std::fs::metadata(&path).and_then(|m| m.modified()).ok(),
@@ -47,6 +47,14 @@ pub fn spawn(
                     };
                     last = Some(signature);
                     colors
+                }
+                // No picture, one colour (Windows): that colour is the whole wallpaper.
+                Ok(sq_sources::Desktop::Colour(colour)) => {
+                    last = None;
+                    match sq_core::seed_from_pixels(&[colour]) {
+                        Some(seed) => WallpaperColors::Ready(seed),
+                        None => WallpaperColors::Unavailable("the desktop has no colour".into()),
+                    }
                 }
                 Err(error) => {
                     last = None;

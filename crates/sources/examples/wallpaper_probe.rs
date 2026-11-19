@@ -1,5 +1,9 @@
 //! Prints what Status Quo finds as the current wallpaper on this machine and the hue it takes.
 fn main() {
+    if let Ok(sq_sources::Desktop::Colour(colour)) = sq_sources::desktop() {
+        println!("no picture, background colour: {colour:?}");
+        return;
+    }
     match sq_sources::locate() {
         Ok(path) => {
             println!("wallpaper file: {}", path.display());

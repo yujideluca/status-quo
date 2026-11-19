@@ -72,24 +72,34 @@ impl Palette {
     pub fn from_wallpaper(seed: &WallpaperSeed, dark: bool) -> Palette {
         let c = seed.chroma.clamp(0.0, 1.0);
         let h = seed.hue;
-        let accent_sat = if c == 0.0 { 0.0 } else { c.clamp(0.45, 0.9) };
+        let (warning_hue, error_hue) = (if dark { 42.0 } else { 38.0 }, 0.0);
+        // A wallpaper in the hue of the warning or error colour gets a paler accent, nearer to
+        // the text colour so that it still stands out from the muted one: the three must stay
+        // apart, and red and amber keep their meaning.
+        let nearest = hue_distance(h, warning_hue).min(hue_distance(h, error_hue));
+        let apart = ((nearest - 15.0) / 35.0).clamp(0.0, 1.0);
+        let accent_sat = if c == 0.0 {
+            0.0
+        } else {
+            c.clamp(0.45, 0.9) * (0.3 + 0.7 * apart)
+        };
         let (background, text, accent, muted, warning, error) = if dark {
             (
                 from_hsl(h, 0.30 * c, 0.09),
                 from_hsl(h, 0.20 * c, 0.90),
-                from_hsl(h, accent_sat, 0.68),
+                from_hsl(h, accent_sat, 0.68 + 0.10 * (1.0 - apart)),
                 from_hsl(h, 0.14 * c, 0.65),
-                from_hsl(42.0, 0.70, 0.66),
-                from_hsl(0.0, 0.70, 0.68),
+                from_hsl(warning_hue, 0.70, 0.66),
+                from_hsl(error_hue, 0.70, 0.68),
             )
         } else {
             (
                 from_hsl(h, 0.35 * c, 0.95),
                 from_hsl(h, 0.30 * c, 0.12),
-                from_hsl(h, accent_sat, 0.32),
+                from_hsl(h, accent_sat, 0.32 - 0.08 * (1.0 - apart)),
                 from_hsl(h, 0.15 * c, 0.38),
-                from_hsl(38.0, 0.80, 0.30),
-                from_hsl(0.0, 0.65, 0.38),
+                from_hsl(warning_hue, 0.80, 0.30),
+                from_hsl(error_hue, 0.65, 0.38),
             )
         };
         let fit = |rgb, min| readable(rgb, background, min, dark);
@@ -104,6 +114,11 @@ impl Palette {
     }
 }
 
+/// Degrees between two hues, 0 to 180.
+fn hue_distance(a: f32, b: f32) -> f32 {
+    let d = (a - b).rem_euclid(360.0);
+    d.min(360.0 - d)
+}
 /// WCAG contrast ratio of two colours, 1 up to 21.
 pub fn contrast(a: [u8; 3], b: [u8; 3]) -> f32 {
     let (la, lb) = (luminance(a), luminance(b));

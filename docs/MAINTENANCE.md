@@ -50,3 +50,12 @@ decision. CI runs it instead of the bare gate, so a `falha` fails the job. Repos
 - **When:** before closing any major tray update (layout, editing, host surface, widget rendering, configuration shape) and before a release. `STATUS_QUO_E2E=1 STATUS_QUO_E2E_SCREEN_IS_FREE=1 tools/quality_gate.sh` runs it as gate step 6.
 - **Keeping it current:** the expected positions and numbers live in `crates/desktop/tests/e2e/manual-baseline.json`, recorded from the manual test of 2026-11-02. When a major update changes the tray, repeat the manual pass, update the baseline and extend the test in the same change; a feature without an end-to-end check is not finished. Findings that are known but unfixed are listed under `open_findings` in the baseline and copied into every report.
 - **Limits:** one screen size (1920x1080) and the first monitor; button positions are recorded values, not found on screen; the idle check lasts 20 seconds, not the 5 minutes of SQ-23.
+
+## 8. Windows desktop stress test (panel)
+
+`tools/stress/windows.ps1` drives the installed panel on the visible desktop of a Windows 10 or 11 test machine with real clicks, real keys and real restarts (SQ-48, SQ-49, SQ-50): every window layer with and without the Floating window setting, Show desktop (Win+D) 15 times, twelve windows over the panel, the Floating window setting switched six times, the saved place, Windows Explorer restarted three times, launch while running, stop and start, 300 fast clicks and three idle minutes with memory compared. Every check prints PASS or FAIL and the exit code is the number of failures.
+
+- **Where:** a test machine or virtual machine, never a desktop in use: it moves the pointer, presses Win+D, restarts Windows Explorer and rewrites the layer and Floating window settings.
+- **How:** without a console window in front of the panel, for example as a scheduled task through `conhost.exe --headless`; `-Only matrix,place` runs chosen rounds.
+- **When:** before a release that changes `crates/desktop/src/host/windows.rs`, the window setup in `main.rs` or the saved place, on Windows 10 and on Windows 11.
+- **Limits:** it is not part of CI (the install test `tools/install-test/windows.ps1` is); one screen; run so far only on a 1280x800 screen.

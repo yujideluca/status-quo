@@ -233,6 +233,63 @@ fn windows_reads_the_registry_then_the_transcoded_file_and_an_override_wins_ever
         .contains("STATUS_QUO_WALLPAPER"));
 }
 
+// REQ SQ-37: Windows without a picture shows one colour; that colour is used, not the picture
+// file Windows keeps from before.
+#[test]
+fn windows_without_a_picture_gives_its_background_colour() {
+    let root = temp("solid");
+    let themes = root.join("Microsoft").join("Windows").join("Themes");
+    fs::create_dir_all(&themes).unwrap();
+    png(&themes.join("TranscodedWallpaper"), [10, 10, 10], (2, 2));
+    let probe = |wallpaper: &str, colour: Option<&str>| {
+        let reg = move |_: &str, args: &[&str]| -> Option<String> {
+            if args.contains(&"WallPaper") {
+                Some(format!("\r\nHKEY_CURRENT_USER\\Control Panel\\Desktop\r\n    WallPaper    REG_SZ    {wallpaper}\r\n"))
+            } else if args.contains(&"Background") {
+                colour.map(|c| format!("    Background    REG_SZ    {c}\r\n"))
+            } else {
+                None
+            }
+        };
+        let appdata = root.display().to_string();
+        desktop_with(
+            &Probe {
+                home: &root,
+                var: &|name| (name == "APPDATA").then(|| appdata.clone()),
+                run: &reg,
+            },
+            true,
+        )
+    };
+    assert_eq!(
+        probe("", Some("16 80 160")).unwrap(),
+        Desktop::Colour([16, 80, 160])
+    );
+    // No readable colour: the old behaviour (the stored picture) stays.
+    assert!(matches!(
+        probe("", Some("blue")).unwrap(),
+        Desktop::Picture(_)
+    ));
+    assert!(matches!(probe("", None).unwrap(), Desktop::Picture(_)));
+    assert_eq!(
+        parse_reg_background("    Background    REG_SZ    0 0 0"),
+        Some([0, 0, 0])
+    );
+    assert_eq!(
+        parse_reg_background("    Background    REG_SZ    300 0 0"),
+        None
+    );
+    assert_eq!(
+        parse_reg_background("    Background    REG_SZ    1 2"),
+        None
+    );
+    // The picture name has no ending: the reason must still read as a sentence.
+    let junk = root.join("TranscodedWallpaper");
+    fs::write(&junk, b"junk").unwrap();
+    let why = load_seed(&junk).unwrap_err();
+    assert!(why.starts_with("the picture cannot be read here"), "{why}");
+}
+
 // REQ SQ-37
 #[test]
 fn nothing_found_says_where_it_looked() {
