@@ -12,3 +12,4 @@ rewritten: a new decision supersedes it.
 | [0004](0004-host-compatibility-layer.md) | Host compatibility layer: layer-shell, X11 hints or plain window chosen at run time | accepted |
 | [0005](0005-free-canvas-layout.md) | Free canvas layout: any widget size and position, tray surface follows the widgets | accepted |
 | [0006](0006-installers-proven-on-bare-machines.md) | Installers are proven by real runs on bare machines; the downloads need nothing preinstalled | accepted |
+| [0007](0007-updates-through-github.md) | Status Quo keeps itself current through GitHub: weekly dependency workflow and self-updating installed trays | accepted |

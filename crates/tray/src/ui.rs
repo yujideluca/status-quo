@@ -873,6 +873,9 @@ impl Tray {
                 ui.label(&self.capabilities);
                 ui.checkbox(&mut draft.navigation, "Enable links and project navigation");
                 ui.checkbox(&mut draft.autostart, "Start at login");
+                ui.checkbox(&mut draft.auto_update, "Update automatically").on_hover_text(
+                    "Looks for a new version on GitHub a few minutes after start and every six hours, and installs it.",
+                );
                 ui.checkbox(&mut draft.locked, "Lock widget layout");
                 ui.separator();
                 ui.heading("Widgets");

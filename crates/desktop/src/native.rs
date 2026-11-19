@@ -330,6 +330,7 @@ pub fn speaks_to_terminal(first: Option<&str>) -> bool {
                 | "uninstall"
                 | "launch"
                 | "stop"
+                | "update"
                 | "inspect"
                 | "floating"
                 | "help"

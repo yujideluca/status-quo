@@ -181,6 +181,19 @@ target\release\status-quo.exe install
 
 What is different on Windows: the tray is a frameless window that belongs to the desktop: kept below your other windows, with no taskbar button and not in the Alt+Tab list (it stays behind also when you click it, ends above the taskbar and stays in place when you press the *Show desktop* shortcut Win+D; drag the empty part of its top row to move it; the *Window layer* setting can put it above others; it keeps running when you close the terminal that started it); the collector and panel talk through a private port on your own machine protected by a random token; CPU and memory come from Windows, every graphics card of any maker from the Windows performance counters (the ones Task Manager uses); the CPU temperature is **unavailable** because Windows offers none without a driver. No administrator rights are used.
 
+## Updates
+
+The installed program keeps itself current (requirement SQ-54, [ADR-0007](../adr/0007-updates-through-github.md)). Three minutes after the panel starts, and then every six hours, it reads `version.txt` of the newest GitHub release. A release publishes that file only after its downloads passed the real install tests. When the version is newer, the program downloads the file for its system (`status-quo-setup.exe`, or `status-quo-linux-<processor>.tar.gz`), refuses it unless its SHA-256 equals the published `.sha256`, and runs that release's own installer: `status-quo-setup.exe --yes` on Windows, `install.sh --no-deps` from the package on Linux. The installer replaces the program and restarts the panel; settings, layouts, history and hooks stay.
+
+| | |
+|---|---|
+| Turn it off | Customize → *Update automatically* (on by default) |
+| Update now | `status-quo update` |
+| Only ask | `status-quo update --check` |
+| What happened | `update.log` in the state folder |
+
+Only the installed copy updates itself; a program started from a source folder never does. On processors without a ready-made download (other than x86-64 and ARM64 Linux, x86-64 Windows) it reports the new version in `update.log` and you reinstall from source. A new version that needs a system library the old one did not need is installed without it; `status-quo doctor` names what is missing.
+
 ## What `install` does
 
 Everything it touches is listed in a manifest and removed again by `status-quo uninstall`. Saved layouts and history stay.

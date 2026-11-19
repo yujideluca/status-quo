@@ -53,6 +53,8 @@ Ubuntu, Debian, Mint, Fedora, Arch, openSUSE and their relatives, all with the s
 | It asks for your password (Linux) | Normal when a system library is missing: the installer installs it for you (once, with your password). Rust, if it is ever needed, is installed automatically too: on processors other than the common x86-64 type, Status Quo is built on your machine and the installer fetches the compiler by itself |
 | Anything else | See [When something looks off](#8-when-something-looks-off) |
 
+**It keeps itself up to date.** A few minutes after it starts, and then every six hours, Status Quo asks GitHub whether a newer version is out. If one is, it downloads it, checks that the download is exactly the published file (its checksum), installs it and restarts with your settings and layout kept. A version is offered only after it passed the same real install tests as above. To turn this off: Customize → untick *Update automatically*. To update right now: `~/.local/bin/status-quo update` (Linux) or `& "$env:LOCALAPPDATA\status-quo\bin\status-quo.exe" update | Out-Host` (Windows); add `--check` to only ask. What happened each time is written to `update.log` in the [state folder](docs/guide/install.md#what-install-does).
+
 **Remove it any time.** Your settings and history stay on your computer.
 
 ```sh
@@ -65,7 +67,7 @@ On Windows, in PowerShell:
 & "$env:LOCALAPPDATA\status-quo\bin\status-quo.exe" uninstall | Out-Host
 ```
 
-Good to know: Status Quo only *reads* the files that Claude, Codex and GitHub already saved on your computer; it sends nothing anywhere. It runs on Linux and Windows. It is not available for macOS.
+Good to know: Status Quo only *reads* the files that Claude, Codex and GitHub already saved on your computer; it sends nothing anywhere. The only thing it fetches by itself is the number of the newest version from GitHub (and that version, when it installs it). It runs on Linux and Windows. It is not available for macOS.
 
 ---
 

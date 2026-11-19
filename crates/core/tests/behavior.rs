@@ -375,3 +375,20 @@ fn the_floating_window_is_off_by_default_and_old_settings_still_load() {
     assert!(again.floating);
     assert_eq!(again, config);
 }
+
+// REQ SQ-54: automatic updates are on by default, settings written before the option existed
+// load with it on, and turning it off is kept.
+#[test]
+fn automatic_updates_are_on_by_default_and_can_be_turned_off() {
+    assert!(Config::default().auto_update);
+    let mut value = serde_json::to_value(Config::default()).unwrap();
+    value.as_object_mut().unwrap().remove("auto_update");
+    let old: Config = serde_json::from_value(value).unwrap();
+    assert!(old.auto_update);
+    let off = Config {
+        auto_update: false,
+        ..Config::default()
+    };
+    let again: Config = serde_json::from_str(&serde_json::to_string(&off).unwrap()).unwrap();
+    assert!(!again.auto_update);
+}

@@ -13,7 +13,8 @@ cd "$(dirname "$0")/.."
 ROOT=$PWD
 ARCH=$(uname -m)
 NAME=status-quo-linux-$ARCH
-RUST=1.88.0
+# The Rust release of rust-toolchain.toml (kept current by tools/update_dependencies.sh).
+RUST=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)
 
 if ! command -v cargo >/dev/null 2>&1 || ! cargo --version | grep -q " ${RUST%.*}"; then
   export RUSTUP_HOME="$ROOT/build/manylinux/rustup" CARGO_HOME="$ROOT/build/manylinux/cargo"

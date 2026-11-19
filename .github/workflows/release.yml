@@ -6,8 +6,12 @@ name: release
 on:
   push:
     tags: ["v*"]
+  # The automatic dependency update (SQ-53) starts the release of the tag it pushed by name,
+  # because a tag pushed with the workflow's own key starts no workflow.
+  workflow_dispatch:
 jobs:
   packages:
+    if: startsWith(github.ref, 'refs/tags/v')
     uses: ./.github/workflows/packages.yml
   publish:
     needs: packages
@@ -62,3 +66,62 @@ jobs:
             & $shell -NoProfile -ExecutionPolicy Bypass -File tools/install-test/windows.ps1 -Line $command -Shell $shell
             if ($LASTEXITCODE -ne 0) { throw "the published command failed in $shell" }
           }
+  announce:
+    # Installed trays update themselves to a release (SQ-54) only after its published downloads
+    # passed the install tests above: the version file they read is published last.
+    needs: [published-linux, published-windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          printf '%s\n' "$GITHUB_REF_NAME" >version.txt
+          gh release upload "$GITHUB_REF_NAME" --clobber version.txt
+  previous:
+    # The release before this one, which must update itself to this one (SQ-54). Releases
+    # before v0.1.6 have no self-update, so for v0.1.6 itself there is nothing to update from.
+    needs: announce
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.find.outputs.tag }}
+    steps:
+      - id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag=$({ gh release list --exclude-drafts --exclude-pre-releases --limit 50 --json tagName -q '.[].tagName'; echo "$GITHUB_REF_NAME"; } |
+            sort -Vu | awk -v me="$GITHUB_REF_NAME" '$0 == me { print previous; exit } { previous = $0 }')
+          if [ "$(printf '%s\nv0.1.6\n' "$tag" | sort -V | head -n1)" != v0.1.6 ]; then
+            echo "::notice::$tag has no self-update (it came with v0.1.6), so no update test for $GITHUB_REF_NAME"
+            tag=""
+          fi
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+  published-update-linux:
+    needs: previous
+    if: needs.previous.outputs.tag != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: In a bare container, the panel as a background program
+        run: |
+          docker run --rm -v "$PWD/tools/install-test:/t:ro" ubuntu:24.04 \
+            sh /t/linux-update.sh "$(sh tools/install-test/readme-command.sh linux)" "${{ needs.previous.outputs.tag }}" "$GITHUB_REF_NAME"
+      - name: As an ordinary user, the panel as a systemd user service
+        run: sh tools/install-test/linux-update.sh "$(sh tools/install-test/readme-command.sh linux)" "${{ needs.previous.outputs.tag }}" "$GITHUB_REF_NAME"
+  published-update-windows:
+    needs: previous
+    if: needs.previous.outputs.tag != ''
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - shell: pwsh
+        run: |
+          $command = (sh tools/install-test/readme-command.sh windows).Trim()
+          & powershell -NoProfile -ExecutionPolicy Bypass -File tools/install-test/windows-update.ps1 -Line $command -From '${{ needs.previous.outputs.tag }}' -To $env:GITHUB_REF_NAME
+          if ($LASTEXITCODE -ne 0) { throw 'the self-update test failed' }

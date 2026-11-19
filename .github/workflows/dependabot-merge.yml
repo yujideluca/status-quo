@@ -1,0 +1,17 @@
+name: dependabot-merge
+# Dependabot's update of the pinned GitHub actions (SQ-53) is merged by itself once every
+# required check (gate, windows, packages / install-proof) passed on its pull request; a
+# failing check leaves the pull request open for a person.
+on: pull_request
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  merge:
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - run: gh pr merge --auto --merge "$PR"
+        env:
+          PR: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ github.token }}

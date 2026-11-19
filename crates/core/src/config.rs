@@ -224,6 +224,8 @@ pub struct Config {
     pub floating: bool,
     pub navigation: bool,
     pub autostart: bool,
+    /// Install a newer release from GitHub by itself (SQ-54). On by default.
+    pub auto_update: bool,
     pub locked: bool,
     /// Space between widgets, in pixels; the flow layout, the stacking of new widgets and the
     /// snapping of the editor all use this one value.
@@ -244,6 +246,7 @@ impl Default for Config {
             floating: false,
             navigation: true,
             autostart: true,
+            auto_update: true,
             locked: true,
             gap: 10.0,
             sources: SourceConfig::default(),

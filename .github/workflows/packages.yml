@@ -13,10 +13,8 @@ jobs:
         include:
           - arch: x86_64
             runner: ubuntu-24.04
-            image: quay.io/pypa/manylinux2014_x86_64@sha256:e6a785657009c612fe2a85fa933051d03a50ba62b1c5e47d62abcab546a2e423
           - arch: aarch64
             runner: ubuntu-24.04-arm
-            image: quay.io/pypa/manylinux2014_aarch64@sha256:c2995cae5e2d433fbe757d1466486727b3edd68ba644cd60df253365f35fda9e
     name: linux-package (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -25,12 +23,13 @@ jobs:
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: build/manylinux
-          key: manylinux-${{ matrix.arch }}-${{ hashFiles('Cargo.lock') }}
+          key: manylinux-${{ matrix.arch }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'tools/build-images') }}
       # Built inside an old base system (glibc 2.17) so the program starts on old and new
       # distributions alike; the script also checks the result with tools/check_binary.rs.
       - name: Build and pack inside the old base system
         run: |
-          docker run --rm -v "$PWD:/src" -w /src "${{ matrix.image }}" sh tools/package-linux.sh
+          image=$(awk -v arch="${{ matrix.arch }}" '$1 == arch { print $2 }' tools/build-images)
+          docker run --rm -v "$PWD:/src" -w /src "$image" sh tools/package-linux.sh
           sudo chown -R "$(id -u):$(id -g)" build
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -136,7 +135,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: dtolnay/rust-toolchain@5445741acf05630efa19e221cc588ebe0842b13d # 1.88.0
+      - run: rustup toolchain install
       # Only read: a release build must never start from a cache entry written by this job.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:

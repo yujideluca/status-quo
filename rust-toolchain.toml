@@ -1,0 +1,6 @@
+# The Rust release every build of Status Quo uses: CI, the release packages and source installs
+# through rustup. tools/update_dependencies.sh moves it to the newest stable release (SQ-53).
+# The oldest Rust the code still supports is `rust-version` in Cargo.toml.
+[toolchain]
+channel = "1.88.0"
+components = ["rustfmt", "clippy"]

@@ -51,6 +51,10 @@ fn under(home: &Path, relative: &str) -> PathBuf {
         .split('/')
         .fold(home.to_path_buf(), |path, part| path.join(part))
 }
+/// Where the installers put the program (SQ-54 updates only this copy).
+pub fn installed_program() -> Option<PathBuf> {
+    home().ok().map(|home| under(&home, managed()[0]))
+}
 fn manifest() -> &'static str {
     if cfg!(windows) {
         WINDOWS_MANIFEST
@@ -567,7 +571,7 @@ const VERIFY: std::time::Duration = std::time::Duration::from_secs(8);
 /// Whether this user has a systemd manager to talk to. Many systems have none (Void, Alpine,
 /// Devuan, MX Linux, containers, Windows): the panel then runs as an ordinary background process
 /// and starts at login from the desktop's autostart entry.
-fn systemd_user() -> bool {
+pub fn systemd_user() -> bool {
     static ANSWER: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ANSWER.get_or_init(|| {
         cfg!(not(windows))

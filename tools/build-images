@@ -1,0 +1,5 @@
+# The old base systems (manylinux2014, glibc 2.17) the Linux downloads are built in, pinned by
+# digest so a build is repeatable. tools/update_dependencies.sh moves them to the newest image
+# (SQ-53). Format: processor, image.
+x86_64 quay.io/pypa/manylinux2014_x86_64@sha256:e6a785657009c612fe2a85fa933051d03a50ba62b1c5e47d62abcab546a2e423
+aarch64 quay.io/pypa/manylinux2014_aarch64@sha256:c2995cae5e2d433fbe757d1466486727b3edd68ba644cd60df253365f35fda9e

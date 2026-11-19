@@ -1,0 +1,13 @@
+# The pinned GitHub actions of the workflows (SQ-53). The weekly update workflow cannot change
+# workflow files with its own key, so GitHub's Dependabot proposes these updates; after every
+# required check passed on its pull request, .github/workflows/dependabot-merge.yml merges it.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ["*"]

@@ -8,6 +8,7 @@ mod native;
 #[cfg(test)]
 #[path = "../../scratch.rs"]
 mod scratch;
+mod update;
 mod wallpaper;
 use eframe::egui;
 use fs2::FileExt;
@@ -74,6 +75,17 @@ fn run() -> Result<(), String> {
         }
         Some("login") => return install::launch(true, false),
         Some("stop") => return install::stop(),
+        Some("update") => {
+            let check = match args.get(1).map(String::as_str) {
+                None => false,
+                Some("--check") if args.len() == 2 => true,
+                Some(other) => {
+                    return Err(format!("unknown update option: {other} (only --check)"))
+                }
+            };
+            println!("{}", update::run(check)?);
+            return Ok(());
+        }
         Some("collect") => {
             return match Service::new(state_root()) {
                 Ok(service) => {
@@ -175,7 +187,7 @@ fn run() -> Result<(), String> {
             };
         }
         Some("--help") | Some("help") => {
-            println!("Status Quo\n  status-quo                  Open the desktop panel\n  status-quo doctor           Check that this computer can run Status Quo\n  status-quo launch --verify  Start the panel in the background and confirm it stays up\n  status-quo stop             Close the panel (it opens again at the next login)\n  status-quo floating on|off  Show the panel as a normal window (on) or on the desktop background (off)\n  status-quo collect          Run the shared background collector\n  status-quo inspect          Read collector status as JSON\n  status-quo inspect --widgets Render widget models in a second Rust host\n  status-quo --screenshot PATH Capture this panel's framebuffer and exit\n  status-quo --customize      Open customization");
+            println!("Status Quo\n  status-quo                  Open the desktop panel\n  status-quo doctor           Check that this computer can run Status Quo\n  status-quo launch --verify  Start the panel in the background and confirm it stays up\n  status-quo stop             Close the panel (it opens again at the next login)\n  status-quo update           Install the newest release from GitHub now\n  status-quo update --check   Only say whether a newer release exists\n  status-quo floating on|off  Show the panel as a normal window (on) or on the desktop background (off)\n  status-quo collect          Run the shared background collector\n  status-quo inspect          Read collector status as JSON\n  status-quo inspect --widgets Render widget models in a second Rust host\n  status-quo --screenshot PATH Capture this panel's framebuffer and exit\n  status-quo --customize      Open customization");
             return Ok(());
         }
         _ => {}
@@ -233,6 +245,16 @@ fn run() -> Result<(), String> {
     // The backend is fixed when the window is created, so the panel restarts itself when the
     // Floating window setting changes. Not in the one-off screenshot and customization runs.
     let restart_on_floating = screenshot.is_none() && !customize;
+    if restart_on_floating {
+        // SQ-54: the installed panel looks for a newer release while "Update automatically"
+        // is on; the setting is read again before every check.
+        update::schedule(|| {
+            let path = state_root().join("config.json");
+            sq_store::read_json::<sq_store::SavedConfig>(&path)
+                .map(|saved| saved.config.auto_update)
+                .unwrap_or(true)
+        });
+    }
     eprintln!("Status Quo host: {}", selection.note);
     #[cfg(target_os = "linux")]
     if selection.backend == host::Backend::LayerShell {

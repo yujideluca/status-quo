@@ -2964,6 +2964,7 @@ dependencies = [
  "libloading",
  "pollster",
  "raw-window-handle",
+ "reqwest",
  "serde_json",
  "sha2",
  "smithay-client-toolkit 0.19.2",

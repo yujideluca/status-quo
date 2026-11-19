@@ -418,3 +418,86 @@ fn installation_is_proven_by_real_runs_never_by_dry_runs() {
     // The bare test proves the system was bare before it trusts the result.
     assert!(read("tools/install-test/linux-bare.sh").contains("would not prove a clean install"));
 }
+
+// REQ SQ-53: the weekly update reaches main and a release only through the full CI on its own
+// commit; Rust and the build images are read from the files it updates, never pinned in a
+// workflow; failures become issues; Dependabot keeps the actions current and merges only
+// through the required checks.
+#[test]
+fn the_repository_updates_itself_only_through_the_full_ci() {
+    let workflow = read(".github/workflows/update-dependencies.yml");
+    let script = read("tools/update_dependencies.sh");
+    for needed in [
+        "schedule:",
+        "tools/update_dependencies.sh",
+        "gh workflow run quality-gate.yml --ref",
+        "--exit-status",
+        "refs/heads/main",
+        "gh workflow run release.yml --ref",
+        "gh issue create",
+    ] {
+        assert!(
+            workflow.contains(needed),
+            "update-dependencies.yml lacks {needed}"
+        );
+    }
+    let ci = workflow.find("--exit-status").unwrap();
+    let main = workflow.find("refs/heads/main").unwrap();
+    let release = workflow.find("gh workflow run release.yml").unwrap();
+    assert!(
+        ci < main && main < release,
+        "main and the release must come after CI passed"
+    );
+    assert!(!workflow.contains("--dry-run") && !workflow.contains("--force"));
+    for needed in [
+        "channel-rust-stable.toml",
+        "rust-toolchain.toml",
+        "cargo update",
+        "pipeline-check.version",
+        "tools/build-images",
+        "imagetools inspect",
+    ] {
+        assert!(
+            script.contains(needed),
+            "update_dependencies.sh lacks {needed}"
+        );
+    }
+    assert!(read("rust-toolchain.toml").contains("channel = \""));
+    assert!(read(".cargo/config.toml").contains("incompatible-rust-versions = \"fallback\""));
+    for name in ["quality-gate.yml", "packages.yml", "release.yml"] {
+        let text = read(&format!(".github/workflows/{name}"));
+        assert!(
+            !text.contains("dtolnay/rust-toolchain"),
+            "{name} pins Rust itself"
+        );
+        assert!(
+            !text.contains("manylinux2014_x86_64@"),
+            "{name} pins a build image itself"
+        );
+    }
+    assert!(read(".github/workflows/release.yml").contains("workflow_dispatch"));
+    assert!(read(".github/dependabot.yml").contains("package-ecosystem: github-actions"));
+    let merge = read(".github/workflows/dependabot-merge.yml");
+    assert!(merge.contains("dependabot[bot]") && merge.contains("gh pr merge --auto"));
+}
+
+// REQ SQ-54: installed trays see a release only after its published downloads passed the
+// install tests, and every release proves the update from the one before it.
+#[test]
+fn a_release_is_offered_for_updates_only_after_its_install_tests() {
+    let release = read(".github/workflows/release.yml");
+    let announce = release.find("  announce:").expect("announce job");
+    assert!(release[announce..].contains("needs: [published-linux, published-windows]"));
+    assert!(release[announce..].contains("version.txt"));
+    assert_eq!(
+        release.matches("version.txt").count(),
+        2,
+        "version.txt only in announce"
+    );
+    for job in ["published-update-linux:", "published-update-windows:"] {
+        assert!(release.contains(job), "release.yml lacks {job}");
+    }
+    assert!(read("tools/install-test/linux-update.sh").contains("PROVEN"));
+    assert!(read("tools/install-test/windows-update.ps1").contains("PROVEN"));
+    assert!(read("README.md").contains("Update automatically"));
+}
