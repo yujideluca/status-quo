@@ -11,10 +11,16 @@ set -eu
 PACKAGE=$1
 BIN=$HOME/.local/bin/status-quo
 STATE=$HOME/.local/state/status-quo
+# The panel writes to panel.log when it runs as a plain process, and to the systemd journal when
+# it runs as a user service (the GitHub machine has a systemd user session).
+panel_output() {
+  cat "$STATE/panel.log" 2>/dev/null || true
+  journalctl --user -u status-quo-panel.service --no-pager -o cat 2>/dev/null || true
+}
 fail() {
   printf '\nFAILED: %s\n' "$*"
   echo '--- panel'
-  tail -n 30 "$STATE/panel.log" 2>/dev/null || true
+  panel_output | tail -n 30
   echo '--- sway'
   tail -n 30 /tmp/sway.log 2>/dev/null || true
   exit 1
@@ -28,7 +34,7 @@ XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/tmp/runtime-$(id -u)}
 mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
 export XDG_RUNTIME_DIR
 unset DISPLAY WAYLAND_DISPLAY || true
-printf 'output HEADLESS-1 resolution 1280x800 background #204060 solid_color\n' >/tmp/sway.conf
+printf 'xwayland disable\noutput HEADLESS-1 resolution 1280x800 background #204060 solid_color\n' >/tmp/sway.conf
 WLR_BACKENDS=headless WLR_RENDERER=pixman WLR_LIBINPUT_NO_DEVICES=1 sway -c /tmp/sway.conf >/tmp/sway.log 2>&1 &
 for _ in $(seq 30); do
   socket=$(find "$XDG_RUNTIME_DIR" -maxdepth 1 -name 'wayland-*' ! -name '*.lock' | head -n1)
@@ -44,8 +50,9 @@ step "Install the package and start the panel"
 mkdir -p /tmp/pkg && tar -C /tmp/pkg -xzf "$PACKAGE"
 sh /tmp/pkg/*/install.sh || fail "install.sh failed"
 sleep 10
-grep -q 'layer-shell' "$STATE/panel.log" || fail "the panel did not choose layer-shell"
-if grep -q 'panicked' "$STATE/panel.log"; then fail "the panel stopped with an error"; fi
+panel_output >/tmp/panel-output.log
+grep -q 'Status Quo host: layer-shell' /tmp/panel-output.log || fail "the panel did not choose layer-shell"
+if grep -q 'panicked' /tmp/panel-output.log; then fail "the panel stopped with an error"; fi
 running=no
 for exe in /proc/[0-9]*/exe; do
   [ "$(readlink "$exe" 2>/dev/null || true)" = "$BIN" ] || continue
