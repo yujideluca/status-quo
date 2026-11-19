@@ -88,6 +88,12 @@ public static System.IntPtr ConsoleWindow(string part) {
     }, System.IntPtr.Zero);
     return found;
 }
+// The class name of a window.
+public static string ClassOf(System.IntPtr hwnd) {
+    var text = new System.Text.StringBuilder(256);
+    GetClassName(hwnd, text, 256);
+    return text.ToString();
+}
 // The class name of the window that owns `hwnd` ("" when it has no owner).
 public static string OwnerClass(System.IntPtr hwnd) {
     var owner = GetWindow(hwnd, 4);
@@ -247,7 +253,14 @@ function PartOfDesktop($label) {
         if (-not $gone) { Fail "$label`: Show desktop did not put the other window away, so the check cannot run" }
         foreach ($tick in 1..10) { [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 100 }
         if (-not [SqTest.Win]::IsWindowVisible($panel) -or [SqTest.Win]::IsIconic($panel)) { Fail "$label`: Show desktop hid the panel" }
-        if ([SqTest.Win]::GetAncestor([SqTest.Win]::WindowFromPoint($middle), 2) -ne $panel) { Fail "$label`: after Show desktop the screen does not show the panel" }
+        if ([SqTest.Win]::GetAncestor([SqTest.Win]::WindowFromPoint($middle), 2) -ne $panel) {
+            # What covers the panel, and whether that is still so three seconds later.
+            $seen = { $top = [SqTest.Win]::GetAncestor([SqTest.Win]::WindowFromPoint($middle), 2)
+                'window there: class "{0}", owner "{1}"; panel owner "{2}"; panel shown: {3}' -f [SqTest.Win]::ClassOf($top), [SqTest.Win]::OwnerClass($top), [SqTest.Win]::OwnerClass($panel), ($top -eq $panel) }
+            $first = & $seen
+            foreach ($tick in 1..30) { [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 100 }
+            Fail "$label`: after Show desktop the screen does not show the panel ($first; three seconds later: $(& $seen))"
+        }
         $shell.ToggleDesktop()
         $back = $false
         foreach ($tick in 1..50) {
