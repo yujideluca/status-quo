@@ -517,7 +517,8 @@ impl Tray {
         intents: &mut Vec<Intent>,
     ) {
         let chip_fill = background(theme);
-        let chip_stroke = egui::Stroke::new(1.0, color(theme.palette.muted).gamma_multiply(0.35));
+        let chip_stroke =
+            egui::Stroke::new(1.0_f32, color(theme.palette.muted).gamma_multiply(0.35));
         let chip = |ui: &mut egui::Ui, label: &str, selected: bool| {
             if bare {
                 ui.add(egui::Button::new(label).fill(chip_fill).stroke(chip_stroke))
@@ -705,7 +706,7 @@ impl Tray {
             egui::Frame::NONE
                 .fill(background(theme))
                 .stroke(egui::Stroke::new(
-                    1.0,
+                    1.0_f32,
                     color(theme.palette.muted).gamma_multiply(0.35),
                 ))
                 .inner_margin(12.0)
@@ -1335,7 +1336,7 @@ fn paint_guides(ctx: &egui::Context, guides: &[layout::Guide], offset: Vec2) {
     for guide in guides {
         let (color, width) = match guide.kind {
             layout::GuideKind::Edge => (Color32::from_rgb(255, 64, 160), 1.5),
-            layout::GuideKind::Center => (Color32::from_rgb(64, 200, 255), 1.5),
+            layout::GuideKind::Center => (Color32::from_rgb(64, 200, 255), 1.5_f32),
             layout::GuideKind::Width | layout::GuideKind::Height => {
                 (Color32::from_rgb(255, 190, 40), 3.0)
             }
@@ -1371,7 +1372,7 @@ fn edit_handles(
     ui.painter().rect_stroke(
         rect,
         0.0,
-        egui::Stroke::new(1.0, accent.gamma_multiply(0.5)),
+        egui::Stroke::new(1.0_f32, accent.gamma_multiply(0.5)),
         egui::StrokeKind::Inside,
     );
     let mut handle = |ui: &mut egui::Ui,
@@ -1780,7 +1781,7 @@ fn chart(
     };
     painter.line_segment(
         [rect.left_bottom(), rect.right_bottom()],
-        egui::Stroke::new(1.0, color(theme.palette.muted)),
+        egui::Stroke::new(1.0_f32, color(theme.palette.muted)),
     );
     for (index, s) in series.iter().enumerate() {
         let mut previous = None;
@@ -1792,8 +1793,10 @@ fn chart(
                     y_of(value),
                 );
                 if let Some(old) = previous {
-                    painter
-                        .line_segment([old, position], egui::Stroke::new(1.5, colors[index % 4]));
+                    painter.line_segment(
+                        [old, position],
+                        egui::Stroke::new(1.5_f32, colors[index % 4]),
+                    );
                 } else {
                     painter.circle_filled(position, 2.0, colors[index % 4]);
                 }

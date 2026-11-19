@@ -1040,12 +1040,11 @@ fn client_worker(
                     last_error.clear();
                 }
             }
-            Err(error) => {
-                if error != last_error {
-                    let _ = updates.send(Update::Error(error.clone()));
-                    ctx.request_repaint();
-                    last_error = error;
-                }
+            // The same error again is not sent twice (it falls through to `_`).
+            Err(error) if error != last_error => {
+                let _ = updates.send(Update::Error(error.clone()));
+                ctx.request_repaint();
+                last_error = error;
             }
             _ => {}
         }
