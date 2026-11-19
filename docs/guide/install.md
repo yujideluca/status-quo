@@ -84,7 +84,10 @@ status-quo-setup.exe --uninstall  remove Status Quo (layouts and history stay)
 status-quo-setup.exe --dry-run    list the steps without doing them
 status-quo-setup.exe --yes        do not wait for a key at the end
 status-quo-setup.exe --no-launch  install but do not start it now
+status-quo-setup.exe --adopt      install over a program file that was put there by hand
 ```
+
+If a file that Status Quo did not install lies where the program goes, the installer stops, changes nothing and says so. `--adopt` installs anyway and first keeps that file as a copy whose name ends in `.before-status-quo`. With the one-line command, run `$env:SQ_SETUP_ARGS = '--adopt'` first and paste the line again.
 
 Where to get it: attached to each tagged release (**Releases** page) and, for every CI run, as the artifact `status-quo-setup-windows` on the run's page. The installer is built by CI with the program embedded; if you build it yourself without the program inside, it looks for a `status-quo.exe` next to itself.
 

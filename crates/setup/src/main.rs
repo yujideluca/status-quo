@@ -19,6 +19,8 @@ const HELP: &str = "Status Quo setup
   status-quo-setup.exe --check      only run the compatibility check
   status-quo-setup.exe --uninstall  remove Status Quo (layouts and history stay)
   status-quo-setup.exe --dry-run    show the steps without doing them
+  status-quo-setup.exe --adopt      install over a program file that was put there by hand
+                                    (it is first kept as a copy ending in .before-status-quo)
 Other options: --yes (do not wait for a key at the end), --no-launch (do not start it now).
 ";
 
@@ -26,6 +28,7 @@ Other options: --yes (do not wait for a key at the end), --no-launch (do not sta
 pub struct Options {
     pub check: bool,
     pub uninstall: bool,
+    pub adopt: bool,
     pub dry_run: bool,
     pub yes: bool,
     pub launch: bool,
@@ -40,6 +43,7 @@ pub fn parse_args(args: &[String]) -> Result<Options, String> {
         match arg.as_str() {
             "--check" => o.check = true,
             "--uninstall" => o.uninstall = true,
+            "--adopt" => o.adopt = true,
             "--dry-run" => o.dry_run = true,
             "--yes" | "-y" => o.yes = true,
             "--no-launch" => o.launch = false,
@@ -87,6 +91,15 @@ pub fn plan(o: &Options) -> Vec<&'static str> {
     }
     steps.push("Run the compatibility check");
     steps
+}
+
+/// What the unpacked program is asked to do (SQ-51: `--adopt` is passed on).
+pub fn install_args(o: &Options) -> &'static [&'static str] {
+    if o.adopt {
+        &["install", "--adopt"]
+    } else {
+        &["install"]
+    }
 }
 
 fn say(text: &str) {
@@ -208,7 +221,7 @@ fn real_main(o: &Options) -> Result<(), String> {
     let program = unpack()?;
     println!("  [ok]  program ready ({})", program.display());
     say("3/4 Installing for your user (no administrator rights)");
-    if !run_program(&program, &["install"])? {
+    if !run_program(&program, install_args(o))? {
         return Err("the installation stopped with an error; the lines above say why".into());
     }
     let mut started = true;
@@ -293,6 +306,12 @@ mod tests {
         let o = parse_args(&args(&["--yes", "--no-launch", "--dry-run"])).unwrap();
         assert!(o.yes && !o.launch && o.dry_run);
         assert!(parse_args(&args(&["--frobnicate"])).is_err());
+        // REQ SQ-51
+        assert_eq!(install_args(&parse_args(&args(&[])).unwrap()), ["install"]);
+        assert_eq!(
+            install_args(&parse_args(&args(&["--adopt"])).unwrap()),
+            ["install", "--adopt"]
+        );
         assert!(parse_args(&args(&["--check", "--uninstall"])).is_err());
         assert!(parse_args(&args(&["/?"])).unwrap().help);
     }

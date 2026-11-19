@@ -368,4 +368,45 @@ $bin = Split-Path $installed
 foreach ($second in 1..20) { if (-not (Test-Path $bin)) { break }; Start-Sleep -Seconds 1 }
 if (Test-Path $bin) { Fail "leftovers after uninstall: $((Get-ChildItem $bin -Force | ForEach-Object Name) -join ', ')" }
 
+Write-Host "`n######## A file in the way: refused with advice that works, then installed with --adopt (SQ-51)"
+# The command lines are the two this test already uses, character for character: Microsoft
+# Defender judges a PowerShell started with a download-and-run command by its exact text and
+# blocked the same line without the closing Write-Host (seen on Windows 11, 2026-11-19).
+function Paste($what) {
+    $ErrorActionPreference = 'Continue'
+    $text = & $Shell -NoProfile -ExecutionPolicy Bypass -Command $what 2>&1 | Out-String
+    $script:pasteCode = $LASTEXITCODE
+    $ErrorActionPreference = 'Stop'
+    Write-Host $text
+    $text -replace '\s+', ' '
+}
+New-Item -ItemType Directory -Force -Path $bin | Out-Null
+Set-Content -LiteralPath $installed -Value 'put here by hand' -Encoding ASCII
+$log = Paste $run
+if ($pasteCode -eq 0) { Fail 'the installer did not refuse a program file it did not install' }
+if ($log -notmatch 'Nothing was installed') { Fail 'the refusal does not say that nothing was installed' }
+if ($log -notmatch 'status-quo-setup\.exe --adopt' -or $log -notmatch 'SQ_SETUP_ARGS') { Fail 'the refusal does not tell how to go on with the Windows installer' }
+if ((Get-Content -LiteralPath $installed -Raw).Trim() -ne 'put here by hand') { Fail 'the refused installation changed the file' }
+if ((Panel).Count -ne 0) { Fail 'a panel runs after a refused installation' }
+# What the message says to do: the setting first, then the same line again.
+$env:SQ_SETUP_ARGS = '--adopt'
+$log = Paste $run
+Remove-Item Env:SQ_SETUP_ARGS
+if ($pasteCode -ne 0) { Fail "the installation with --adopt ended with code $pasteCode" }
+$copy = "$installed.before-status-quo"
+if (-not (Test-Path $copy)) { Fail "no copy of the file that was in the way at $copy" }
+if ((Get-Content -LiteralPath $copy -Raw).Trim() -ne 'put here by hand') { Fail 'the copy does not hold the file that was in the way' }
+if ((Get-Item $installed).Length -lt 100000) { Fail 'the program was not installed over the file' }
+Start-Sleep -Seconds 5
+if ((Panel).Count -eq 0) { Fail 'no panel runs after the installation with --adopt' }
+Write-Host "refused with the advice, then installed with --adopt; the copy is at $copy"
+$log = Paste "$remove; exit `$LASTEXITCODE"
+if ($pasteCode -ne 0) { Fail "uninstall after --adopt ended with code $pasteCode" }
+if (Test-Path $installed) { Fail 'the program is still there after the second uninstall' }
+if ((Panel).Count -ne 0) { Fail 'the panel is still running after the second uninstall' }
+if (-not (Test-Path $copy)) { Fail 'uninstall deleted the copy of the file that was in the way' }
+Remove-Item -LiteralPath $copy -Force
+foreach ($second in 1..20) { if (-not (Get-ChildItem $bin -Force -ErrorAction SilentlyContinue)) { break }; Start-Sleep -Seconds 1 }
+Remove-Item -LiteralPath $bin -Recurse -Force -ErrorAction SilentlyContinue
+
 Write-Host "`nPROVEN on $((Get-CimInstance Win32_OperatingSystem).Caption) with $Shell"

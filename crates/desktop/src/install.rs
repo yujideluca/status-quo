@@ -474,10 +474,7 @@ fn install_at(
                 .is_some_and(|owner| owner.permits(&relative, old))
             {
                 if !adopt {
-                    return Err(format!(
-                        "{} is unmanaged or changed ownership; original retained. To keep a copy and take it over, run `status-quo install --adopt`",
-                        path.display()
-                    ));
+                    return Err(refusal(&path, cfg!(windows)));
                 }
                 backups.push((backup_path(&path), old.clone(), mode));
             }
@@ -530,6 +527,20 @@ fn install_at(
     Ok(())
 }
 /// A name next to `path` that does not exist yet: `<file>.before-status-quo`, then `.1`, `.2`.
+/// What a person reads when a file in the way stops the installation (SQ-51): what happened,
+/// what was left alone, and how to go on with the installer they have. The program itself is
+/// usually not installed at this point, so its own command comes last.
+pub fn refusal(path: &Path, windows: bool) -> String {
+    let how = if windows {
+        "run `status-quo-setup.exe --adopt`; if you installed with the one-line command, run `$env:SQ_SETUP_ARGS = '--adopt'` first and paste the line again"
+    } else {
+        "add `--adopt` to the installer you used: `sh install.sh --adopt` (downloaded package), `bash tools/install.sh --adopt` (source), or end the one-line command with `| sh -s -- --adopt`"
+    };
+    format!(
+        "{file} already exists and Status Quo did not put it there (or it was changed afterwards). Nothing was installed and the file was left as it is. To install anyway and keep the existing file as a copy named {file}.before-status-quo, repeat the installation with --adopt: {how}. From a status-quo program you already have: `status-quo install --adopt`.",
+        file = path.display()
+    )
+}
 fn backup_path(path: &Path) -> PathBuf {
     let base = format!("{}.before-status-quo", path.display());
     let mut candidate = PathBuf::from(&base);
@@ -997,6 +1008,25 @@ mod tests {
         fixture.write(managed()[0], b"hand-copied build");
         let error = fixture.install().unwrap_err();
         assert!(error.contains("--adopt"), "{error}");
+        // REQ SQ-51
+        assert!(error.contains("Nothing was installed"), "{error}");
+        // Only the file name: the separators inside the path differ between systems.
+        let name = program.file_name().unwrap().to_string_lossy();
+        assert!(
+            error.contains(&format!("{name}.before-status-quo")),
+            "{error}"
+        );
+        let windows = refusal(&program, true);
+        assert!(
+            windows.contains("status-quo-setup.exe --adopt") && windows.contains("SQ_SETUP_ARGS"),
+            "{windows}"
+        );
+        let linux = refusal(&program, false);
+        assert!(
+            linux.contains("sh install.sh --adopt") && linux.contains("sh -s -- --adopt"),
+            "{linux}"
+        );
+        assert!(!linux.contains("status-quo-setup.exe") && !windows.contains("install.sh"));
         assert_eq!(fs::read(&program).unwrap(), b"hand-copied build");
         // A bad assistant file stops adoption before any backup or overwrite.
         fixture.write(".codex/hooks.json", b"malformed");
