@@ -306,10 +306,6 @@ fn run() -> Result<(), String> {
             vsync: true,
             ..Default::default()
         };
-        #[cfg(windows)]
-        if matches!(renderer, eframe::Renderer::Wgpu) {
-            accept_software_adapter(&mut options);
-        }
         // Framed window on a Wayland session: prefer process-local XWayland, which honors
         // requested window layers. The X11 desktop backend needs X11 for its hints.
         #[cfg(target_os = "linux")]
@@ -321,16 +317,25 @@ fn run() -> Result<(), String> {
         }
         let (config, screenshot, note) =
             (config.clone(), screenshot.clone(), selection.note.clone());
-        // The DirectX fallback cannot draw a see-through window: the frameless panel then
-        // keeps its own background and title row instead of showing black between widgets.
+        // The DirectX fallback is see-through when the adapter that was chosen accepts colours
+        // with alpha (SQ-52); otherwise the frameless panel keeps its own background and title
+        // row instead of showing black between widgets. The adapter is chosen before the app
+        // is created, so the answer is known here.
         #[cfg(windows)]
-        let opaque = matches!(renderer, eframe::Renderer::Wgpu);
+        let see_through = Arc::new(AtomicBool::new(false));
+        #[cfg(windows)]
+        if matches!(renderer, eframe::Renderer::Wgpu) {
+            accept_software_adapter(&mut options, see_through.clone());
+        }
         #[cfg(not(windows))]
         let opaque = false;
         let result = eframe::run_native(
             "Status Quo",
             options,
             Box::new(move |cc| {
+                #[cfg(windows)]
+                let opaque = matches!(renderer, eframe::Renderer::Wgpu)
+                    && !see_through.load(Ordering::SeqCst);
                 let mut app = App::new(
                     cc.egui_ctx.clone(),
                     *config,
@@ -369,14 +374,31 @@ fn run() -> Result<(), String> {
 /// wgpu normally ignores software adapters. This machine has no OpenGL 2, so a real GPU is
 /// preferred and, failing that, any adapter is accepted, including Windows' built-in software
 /// renderer (WARP): a slow window is better than none.
+/// Whether a window drawn through wgpu can be see-through (SQ-52): the surface must accept
+/// colours with premultiplied or postmultiplied alpha. Plain DirectX swap chains made from a
+/// window offer neither; the DirectComposition ones do.
+pub fn see_through_possible(modes: &[wgpu::CompositeAlphaMode]) -> bool {
+    modes.iter().any(|m| {
+        matches!(
+            m,
+            wgpu::CompositeAlphaMode::PreMultiplied | wgpu::CompositeAlphaMode::PostMultiplied
+        )
+    })
+}
 #[cfg(windows)]
-fn accept_software_adapter(options: &mut eframe::NativeOptions) {
+fn accept_software_adapter(options: &mut eframe::NativeOptions, see_through: Arc<AtomicBool>) {
     use eframe::{
         egui_wgpu::{WgpuSetup, WgpuSetupCreateNew},
         wgpu::DeviceType,
     };
+    // A swap chain made from a DirectComposition visual is the one DirectX swap chain that can
+    // be see-through (SQ-52). wgpu 27 reads this choice from the environment (it does not export
+    // the type that names it); a value someone set on purpose is kept.
+    if std::env::var_os("WGPU_DX12_PRESENTATION_SYSTEM").is_none() {
+        std::env::set_var("WGPU_DX12_PRESENTATION_SYSTEM", "DxgiFromVisual");
+    }
     let mut setup = WgpuSetupCreateNew::default();
-    setup.native_adapter_selector = Some(std::sync::Arc::new(|adapters, surface| {
+    setup.native_adapter_selector = Some(Arc::new(move |adapters, surface| {
         for a in adapters {
             let info = a.get_info();
             eprintln!(
@@ -399,6 +421,14 @@ fn accept_software_adapter(options: &mut eframe::NativeOptions) {
                 DeviceType::Cpu => 4,
             })
             .cloned()
+            .inspect(|a| {
+                let modes = surface
+                    .map(|s| s.get_capabilities(a).alpha_modes)
+                    .unwrap_or_default();
+                let possible = see_through_possible(&modes);
+                eprintln!("Status Quo: alpha modes {modes:?}, see-through: {possible}");
+                see_through.store(possible, Ordering::SeqCst);
+            })
             .ok_or_else(|| "no graphics adapter can show a window".to_string())
     }));
     options.wgpu_options.wgpu_setup = WgpuSetup::CreateNew(setup);
@@ -1012,5 +1042,19 @@ fn client_worker(
                 ctx.request_repaint();
             }
         }
+    }
+}
+#[cfg(test)]
+mod see_through_tests {
+    use super::see_through_possible;
+    use wgpu::CompositeAlphaMode as M;
+    // REQ SQ-52
+    #[test]
+    fn a_see_through_window_needs_a_surface_that_takes_alpha() {
+        assert!(!see_through_possible(&[]));
+        assert!(!see_through_possible(&[M::Opaque]));
+        assert!(!see_through_possible(&[M::Opaque, M::Inherit, M::Auto]));
+        assert!(see_through_possible(&[M::Opaque, M::PreMultiplied]));
+        assert!(see_through_possible(&[M::PostMultiplied]));
     }
 }

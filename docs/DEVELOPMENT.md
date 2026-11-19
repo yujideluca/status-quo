@@ -6,7 +6,7 @@ A modular Rust desktop widget tray for Linux, with KDE as its first desktop wrap
 
 ## Development
 
-Requires Rust 1.87 or newer, Linux graphics libraries (X11/Wayland, xkbcommon, OpenGL), and existing Claude/Codex CLI authentication for live account status. GitHub reads use the installed `gh` CLI and its existing authorization. Status Quo does not create or refresh credentials.
+Requires Rust 1.88 or newer, Linux graphics libraries (X11/Wayland, xkbcommon, OpenGL), and existing Claude/Codex CLI authentication for live account status. GitHub reads use the installed `gh` CLI and its existing authorization. Status Quo does not create or refresh credentials.
 
 ```sh
 cargo build --locked -p status-quo

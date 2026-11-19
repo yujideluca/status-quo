@@ -19,7 +19,7 @@ fn manifest_errors(text: &str, allowed: &[&str]) -> Vec<String> {
             let name = line.split(['=', '.']).next().unwrap_or("").trim();
             let declaration: String = line.chars().filter(|c| !c.is_whitespace()).collect();
             let canonical = declaration == format!("{name}.workspace=true")
-                || (name == "egui" && declaration == "egui=\"0.31.1\"");
+                || (name == "egui" && declaration == "egui=\"0.33.3\"");
             if !allowed.contains(&name) || !canonical {
                 errors.push(format!("unreviewed portable dependency {name}"));
             }

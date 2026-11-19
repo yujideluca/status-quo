@@ -9,4 +9,4 @@ sq-core.workspace = true
 sq-contract.workspace = true
 sq-widgets.workspace = true
 serde_json.workspace = true
-egui = "0.31.1"
+egui = "0.33.3"

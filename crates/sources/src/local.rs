@@ -374,7 +374,7 @@ pub fn memory_feed(root: &Path, now: i64) -> (Vec<MemoryItem>, Health) {
     let hidden = items.len().saturating_sub(300);
     items.truncate(300);
     let health=Health{state:if malformed>0{SourceState::Error}else if items.is_empty(){SourceState::Empty}else{SourceState::Fresh},last_success:Some(now),malformed,deferred,
-        message:format!("Read-only historical events · {} additional older matching events outside the 300-entry feed",hidden),retry_at:None};
+        message:format!("Read-only historical events · {hidden} additional older matching events outside the 300-entry feed"),retry_at:None};
     (items, health)
 }
 pub fn seed_repositories(roots: &[String]) -> Vec<String> {

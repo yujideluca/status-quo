@@ -11,7 +11,7 @@
 set -euo pipefail
 
 MIN_RUST_MAJOR=1
-MIN_RUST_MINOR=87
+MIN_RUST_MINOR=88
 REPO_URL=${SQ_REPO_URL:-https://github.com/yujideluca/status-quo.git}
 SRC_DIR=${SQ_SRC:-}
 OS_RELEASE=${SQ_OS_RELEASE:-/etc/os-release}

@@ -11,7 +11,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@9fd5edfc8bba9f7408b867e3f58b5a2119358898 # 1.87.0
+      - uses: dtolnay/rust-toolchain@5445741acf05630efa19e221cc588ebe0842b13d # 1.88.0
         with:
           components: rustfmt, clippy
           targets: wasm32-unknown-unknown
@@ -37,7 +37,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: dtolnay/rust-toolchain@9fd5edfc8bba9f7408b867e3f58b5a2119358898 # 1.87.0
+      - uses: dtolnay/rust-toolchain@5445741acf05630efa19e221cc588ebe0842b13d # 1.88.0
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo build --locked --workspace --all-targets
       - run: cargo test --locked --workspace

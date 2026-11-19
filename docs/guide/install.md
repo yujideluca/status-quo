@@ -56,7 +56,7 @@ It runs six steps and says what it is doing in each:
 |---|---|---|
 | 1. Check the computer | reads your distribution, architecture, session type, desktop, and whether `gh`, `claude` and `codex` are installed | nothing |
 | 2. Build libraries | installs a compiler, git, curl and pkg-config (and the drawing libraries' development files) with your package manager: `apt-get` (Debian, Ubuntu, Mint), `dnf` (Fedora, RHEL family), `pacman` (Arch, Manjaro) or `zypper` (openSUSE) | `sudo`, asked once |
-| 3. Rust | installs Rust 1.87 or newer through the official `rustup` into your home folder if it is missing or older | nothing |
+| 3. Rust | installs Rust 1.88 or newer through the official `rustup` into your home folder if it is missing or older | nothing |
 | 4. Source | uses the checkout it is run from, or clones the repository into `~/.local/share/status-quo/src` | network |
 | 5. Build and install | `cargo build --release --locked -p status-quo`, then `status-quo install`, then starts it if you are in a graphical session | nothing |
 | 6. Compatibility check | runs `status-quo doctor` (below) | nothing |
@@ -111,7 +111,7 @@ The exit code is 0 unless something blocks, so scripts can use it.
 
 | Need | Why |
 |---|---|
-| Rust 1.87 or newer ([rustup.rs](https://rustup.rs)) | the whole program is Rust |
+| Rust 1.88 or newer ([rustup.rs](https://rustup.rs)) | the whole program is Rust |
 | Drawing libraries (Linux only, below) | X11, Wayland, keyboard maps and OpenGL |
 | `claude` and/or `codex` signed in | the usage, token and session widgets read what these tools saved |
 | `gh` signed in (`gh auth login`) | the GitHub activity widget reads through it |

@@ -13,7 +13,7 @@ cd "$(dirname "$0")/.."
 ROOT=$PWD
 ARCH=$(uname -m)
 NAME=status-quo-linux-$ARCH
-RUST=1.87.0
+RUST=1.88.0
 
 if ! command -v cargo >/dev/null 2>&1 || ! cargo --version | grep -q " ${RUST%.*}"; then
   export RUSTUP_HOME="$ROOT/build/manylinux/rustup" CARGO_HOME="$ROOT/build/manylinux/cargo"

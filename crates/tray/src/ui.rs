@@ -564,7 +564,7 @@ impl Tray {
         } else {
             egui::Button::new("+ Add widget")
         };
-        egui::menu::menu_custom_button(ui, add_button, |ui| {
+        egui::containers::menu::MenuButton::from_button(add_button).ui(ui, |ui| {
             let sources = self
                 .draft
                 .as_ref()
@@ -590,7 +590,7 @@ impl Tray {
                                 provider,
                             }));
                         }
-                        ui.close_menu();
+                        ui.close();
                     }
                 }
             }
@@ -732,7 +732,7 @@ impl Tray {
                                 ] {
                                     if ui.button(label).clicked() {
                                         intents.push(Intent::Configure(action));
-                                        ui.close_menu();
+                                        ui.close();
                                     }
                                 }
                             });

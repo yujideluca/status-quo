@@ -232,14 +232,11 @@ pub fn run(
         compatible_surface: Some(&wgpu_surface),
         ..Default::default()
     }))
-    .ok_or("No GPU adapter")?;
-    let (device, queue) = pollster::block_on(adapter.request_device(
-        &wgpu::DeviceDescriptor {
-            label: Some("status-quo"),
-            ..Default::default()
-        },
-        None,
-    ))
+    .map_err(|e| format!("No GPU adapter: {e}"))?;
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("status-quo"),
+        ..Default::default()
+    }))
     .map_err(|e| format!("GPU device: {e}"))?;
     let capabilities = wgpu_surface.get_capabilities(&adapter);
     let format = capabilities
@@ -267,7 +264,7 @@ pub fn run(
         view_formats: vec![],
     };
     wgpu_surface.configure(&device, &config);
-    let renderer = egui_wgpu::Renderer::new(&device, format, None, 1, false);
+    let renderer = egui_wgpu::Renderer::new(&device, format, egui_wgpu::RendererOptions::default());
 
     ctx.set_embed_viewports(true);
     let mut event_loop: EventLoop<State> = EventLoop::try_new().map_err(|e| e.to_string())?;
@@ -429,6 +426,7 @@ impl State {
                 .begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("status-quo"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        depth_slice: None,
                         view: &view,
                         resolve_target: None,
                         ops: wgpu::Operations {

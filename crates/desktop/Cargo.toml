@@ -13,7 +13,7 @@ sq-collector = { path = "../collector" }
 sq-store = { path = "../store" }
 sq-sources = { path = "../sources" }
 serde_json.workspace = true
-eframe = { version = "0.31.1", default-features = false, features = ["default_fonts", "glow"] }
+eframe = { version = "0.33.3", default-features = false, features = ["default_fonts", "glow"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 raw-window-handle = "0.6"
 fs2 = "0.4"
@@ -23,12 +23,12 @@ ctrlc = { version = "3", features = ["termination"] }
 
 # Linux only: the X11 and Wayland hosts. Windows uses the ordinary window of eframe.
 [target.'cfg(target_os = "linux")'.dependencies]
-eframe = { version = "0.31.1", default-features = false, features = ["default_fonts", "glow", "x11", "wayland"] }
+eframe = { version = "0.33.3", default-features = false, features = ["default_fonts", "glow", "x11", "wayland"] }
 x11rb = { version = "0.13", features = ["randr"] }
 winit = { version = "0.30", default-features = false, features = ["x11", "wayland"] }
 smithay-client-toolkit = { version = "0.19.2", default-features = false, features = ["calloop"] }
-wgpu = { version = "24", default-features = false, features = ["wgsl"] }
-egui-wgpu = { version = "0.31.1", default-features = false }
+wgpu = { version = "27", default-features = false, features = ["wgsl"] }
+egui-wgpu = { version = "0.33.3", default-features = false }
 pollster = "0.4"
 # Already part of the build (the window libraries load X11, Wayland and OpenGL with it); used
 # directly by `doctor` to ask whether those system libraries are present.
@@ -37,7 +37,7 @@ libloading = "0.8"
 # Windows: OpenGL first, DirectX through wgpu when the machine has no OpenGL 2 (virtual machines,
 # remote sessions, old drivers).
 [target.'cfg(windows)'.dependencies]
-eframe = { version = "0.31.1", default-features = false, features = ["default_fonts", "glow", "wgpu"] }
+eframe = { version = "0.33.3", default-features = false, features = ["default_fonts", "glow", "wgpu"] }
 # The DirectX 12 backend must be named: without it the DirectX fallback finds no graphics
 # adapter at all (v0.1.0 to v0.1.2), and a PC without a graphics driver shows no panel.
-wgpu = { version = "24", default-features = false, features = ["dx12", "wgsl"] }
+wgpu = { version = "27", default-features = false, features = ["dx12", "wgsl"] }

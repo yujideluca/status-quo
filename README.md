@@ -130,7 +130,7 @@ Options of the source installer: `--check-only` (only look), `--dry-run`, `--uni
 The short version for Linux by hand:
 
 ```sh
-# 1. Rust 1.87 or newer (https://rustup.rs), plus the drawing libraries (Debian/Ubuntu names):
+# 1. Rust 1.88 or newer (https://rustup.rs), plus the drawing libraries (Debian/Ubuntu names):
 sudo apt-get install -y pkg-config libx11-dev libxkbcommon-dev libwayland-dev libgl1-mesa-dev
 
 # 2. Build, then let Status Quo install itself for your user only (no sudo):
