@@ -515,3 +515,29 @@ fn every_push_draws_the_panel_on_a_layer_shell_desktop() {
     let script = read("tools/install-test/linux-layer-shell.sh");
     assert!(script.contains("sway") && script.contains("grim") && script.contains("PROVEN"));
 }
+
+// REQ SQ-53
+/// A script that a workflow starts by its path must be allowed to run: the first automatic
+/// update stopped with "Permission denied" because tools/update_dependencies.sh was committed
+/// without its executable mode. Every shell script under tools/ carries that mode, so any of them
+/// can be started by path.
+#[cfg(unix)]
+#[test]
+fn every_tools_shell_script_can_be_started_by_its_path() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut not_executable = Vec::new();
+    for folder in ["tools", "tools/install-test", "tools/hooks"] {
+        for entry in fs::read_dir(root().join(folder)).unwrap() {
+            let path = entry.unwrap().path();
+            let script = path.extension().is_some_and(|e| e == "sh")
+                || (folder == "tools/hooks" && path.is_file());
+            if script && fs::metadata(&path).unwrap().permissions().mode() & 0o111 == 0 {
+                not_executable.push(path.strip_prefix(root()).unwrap().display().to_string());
+            }
+        }
+    }
+    assert!(
+        not_executable.is_empty(),
+        "shell scripts without executable mode (git update-index --chmod=+x): {not_executable:?}"
+    );
+}
