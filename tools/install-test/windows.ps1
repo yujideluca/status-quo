@@ -235,14 +235,33 @@ function PartOfDesktop($label) {
     # 0x80 tool window (not in Alt+Tab, not on the taskbar), 0x40000 forces a taskbar button.
     if (-not ($extended -band 0x80) -or ($extended -band 0x40000)) { Fail "$label`: the panel would be listed in Alt+Tab ($read)" }
     if ($owner -ne 'Progman') { Fail "$label`: the panel is not owned by the desktop window ($read)" }
+    $middle = New-Object SqTest.Win+Spot
+    $middle.X = [int](($place.Left + $place.Right) / 2); $middle.Y = [int](($place.Top + $place.Bottom) / 2)
+    # A test machine can have a window of another program left open over the panel. A dialog
+    # box is not put away by Show desktop (seen 2026-11-19 on the GitHub Windows Server 2025
+    # machine: "System Properties" of SystemPropertiesPerformance), and the check below would
+    # then see that dialog instead of the panel. Such a program is closed first, and named.
+    foreach ($round in 1..5) {
+        $top = [SqTest.Win]::GetAncestor([SqTest.Win]::WindowFromPoint($middle), 2)
+        if ($top -eq $panel) { break }
+        $owner = [uint32]0; [void][SqTest.Win]::GetWindowThreadProcessId($top, [ref]$owner)
+        $program = Get-Process -Id $owner -ErrorAction SilentlyContinue
+        $title = New-Object Text.StringBuilder 256; [void][SqTest.Win]::GetWindowText($top, $title, 256)
+        $what = 'class "{0}", title "{1}", program "{2}"' -f [SqTest.Win]::ClassOf($top), $title, $program.ProcessName
+        if (-not $program -or $owner -eq $PID -or $program.ProcessName -in 'explorer', 'status-quo') {
+            Fail "$label`: before Show desktop the screen does not show the panel but a window that this test may not close ($what)"
+        }
+        Write-Host "$label`: closing a window left open over the panel by another program ($what)"
+        Stop-Process -Id $owner -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Milliseconds 700
+        if ($round -eq 5) { Fail "$label`: windows of other programs still cover the panel ($what)" }
+    }
     $other = New-Object Windows.Forms.Form
     $other.Text = 'Another window'; $other.StartPosition = 'Manual'
     $other.SetBounds(40, 40, 320, 240)
     $other.Show(); $other.Activate()
     foreach ($tick in 1..10) { [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 100 }
     $shell = New-Object -ComObject Shell.Application
-    $middle = New-Object SqTest.Win+Spot
-    $middle.X = [int](($place.Left + $place.Right) / 2); $middle.Y = [int](($place.Top + $place.Bottom) / 2)
     try {
         $shell.ToggleDesktop()
         $gone = $false
